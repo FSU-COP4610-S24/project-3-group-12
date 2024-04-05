@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <string.h>
+#include <unistd.h>
 
 void displayPrompt();
 char *get_input(void);
@@ -12,6 +14,7 @@ void free_tokens(tokenlist *tokens);
 
 int main() {
     while (1) {
+        displayPrompt();
         char *input = get_input();
         tokenlist *tokens = get_tokens(input);
 
