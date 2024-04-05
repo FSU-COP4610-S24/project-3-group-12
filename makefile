@@ -5,7 +5,7 @@ EXECUTABLE:= filesys
 SRCS := $(wildcard $(SRC)/*.c)
 OBJS := $(patsubst $(SRC)/%.c,$(OBJ)/%.o,$(SRCS))
 INCS := -Iinclude/
-DIRS := $(OBJ)/
+DIRS := $(OBJ)/ mnt/
 EXEC := ./$(EXECUTABLE)
 
 CC := gcc

@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 void displayPrompt();
 char *get_input(void);
@@ -12,20 +13,42 @@ void add_token(tokenlist *tokens, char *item);
 tokenlist *get_tokens(char *input);
 void free_tokens(tokenlist *tokens);
 
-int main() {
-    while (1) {
-        displayPrompt();
-        char *input = get_input();
-        tokenlist *tokens = get_tokens(input);
+struct imageStruct {
+	int fd;
+}
 
-        //execution
 
-        free(input);
-        free_tokens(tokens);
-    }
+
+int main(int argc, char *argv[]) {
+	//checking for right arguments
+	if (argc != 2) {
+		printf("Argument error: ./filesys <FAT32 image file>\n");
+		return 1;
+	}
+	
+	int status;
+
+	status = system("sudo mount -o loop %s ./mnt", argv[1]);
+
+	if(status == -1) {
+		perror("mount failed");
+		return 1;
+	}
+
+	while (1) {
+		displayPrompt();
+		char *input = get_input();
+		tokenlist *tokens = get_tokens(input);
+		
+		//execution
+		
+		free(input);
+		free_tokens(tokens);
+	}
 
     return 0;
 }
+
 
 
 //user input related functions
