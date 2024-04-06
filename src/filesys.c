@@ -15,6 +15,12 @@ void free_tokens(tokenlist *tokens);
 
 struct imageStruct {
 	int fd;
+    uint16_t BpSect;
+    uint16_t sectpClus;
+    uint16_t rootClus;
+    uint16_t totalClus;
+    uint16_t entpFat;
+    int size;
 }
 
 
@@ -27,13 +33,15 @@ int main(int argc, char *argv[]) {
 	}
 	
 	int status;
-
 	status = system("sudo mount -o loop %s ./mnt", argv[1]);
-
 	if(status == -1) {
 		perror("mount failed");
 		return 1;
 	}
+
+    imageStruct* image = malloc(sizeof(imageStruct));
+    image->fd = open(argv[1], 0_RDWR)
+
 
 	while (1) {
 		displayPrompt();
@@ -49,6 +57,23 @@ int main(int argc, char *argv[]) {
     return 0;
 }
 
+
+//assumes file descriptor is set
+void initImage(*imageStruct image) {
+    char buf0[2];
+    ssize_t bytes_read0 = pread(image->fd, buf0, 2, 11);
+    image->BpSect = 0;
+    image->BpSect = buf0[0] + buf0[1] << 8;
+    char buf1[1];
+    ssize_t bytes_read1 = pread(image->fd, buf1, 1, 13);
+    image->sectpClus = 0;
+    image->sectpClus = buf1[0] << 8;
+    char buf2[2];
+    ssize_t bytes_read2 = pread(image->fd, buf2, 2, 14);
+    int rsvSecCnt = 0;
+    rsvSecCnt = buf2[0] + buf2[1] << 8;
+    int fatAdd = image->BpSect * rsvSecCnt;
+}
 
 
 //user input related functions
