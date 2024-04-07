@@ -57,6 +57,12 @@ int main(int argc, char *argv[]) {
 		tokenlist *tokens = get_tokens(input);
 		
 		//execution
+        if(tokens[0] == "exit") {
+            exit;
+        }
+        if(tokens[0] == "info") {
+            printImageStruct(image);
+        }
 		
 		free(input);
 		free_tokens(tokens);
@@ -105,6 +111,16 @@ void initImage(*imageStruct image) {
 
     uint32_t fatSizeInBytes = image->secpFAT * image->BpSect;
     image->entpFAT = fatSizeInBytes / 4;
+}
+
+//info command
+void printImageStruct(const struct imageStruct *img) {
+    printf("bytes per sector: %" PRIu16 "\n", img->BpSect);
+    printf("sectors per cluster: %" PRIu8 "\n", img->sectpClus);
+    printf("root cluster: %" PRIu32 "\n", img->rootClus);
+    printf("total # of clusters in data region: %" PRIu32 "\n", img->totalDataClus);
+    printf("# of entries in one FAT: %" PRIu32 "\n", img->entpFAT);
+    printf("size of image (in bytes): %" PRId64 "\n", img->size);
 }
 
 
