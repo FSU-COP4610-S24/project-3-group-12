@@ -16,10 +16,14 @@ void free_tokens(tokenlist *tokens);
 struct imageStruct {
 	int fd;
     uint16_t BpSect;
-    uint16_t sectpClus;
-    uint16_t rootClus;
-    uint16_t totalClus;
-    uint16_t entpFat;
+    uint8_t sectpClus;
+    uint8_t numFATs;
+    int16_t rsvSecCnt;
+    uint32_t secpFAT;
+    uint32_t rootClus;
+    uint32_t totalSec;
+    uint32_t totalDataClus;
+    uint32_t entpFat;
     int size;
 }
 
@@ -62,17 +66,38 @@ int main(int argc, char *argv[]) {
 void initImage(*imageStruct image) {
     char buf0[2];
     ssize_t bytes_read0 = pread(image->fd, buf0, 2, 11);
-    image->BpSect = 0;
     image->BpSect = buf0[0] + buf0[1] << 8;
+
     char buf1[1];
     ssize_t bytes_read1 = pread(image->fd, buf1, 1, 13);
-    image->sectpClus = 0;
     image->sectpClus = buf1[0] << 8;
+
     char buf2[2];
     ssize_t bytes_read2 = pread(image->fd, buf2, 2, 14);
-    int rsvSecCnt = 0;
-    rsvSecCnt = buf2[0] + buf2[1] << 8;
-    int fatAdd = image->BpSect * rsvSecCnt;
+    image->rsvSecCnt = buf2[0] + buf2[1] << 8;
+
+    int fatAddr = image->BpSect * image->rsvSecCnt;
+
+    char buf3[1];
+    ssize_t bytes_read3 = pread(image->fd, buf3, 1, 16);
+    image.numFATs = buf3[0];
+
+    char buf4[4];
+    ssize_t bytes_read4 = pread(image->fd, buf4, 4, 36);
+    image.secpFAT = buf4[0] + (buf4[1] << 8) + (buf4[2] << 16) + (buf4[3] << 24);
+
+    char buf5[4];
+    ssize_t bytes_read5 = pread(image->fd, buf5, 4, 44);
+    image.rootCluster = buf5[0] + (buf5[1] << 8) + (buf5[2] << 16) + (buf5[3] << 24);
+
+    uint16_t totSec16;
+    uint32_t totSec32;
+    ssize_t bytes_read6 = pread(image->fd, &totSec16, sizeof(totSec16), 19);
+    ssize_t bytes_read7 = pread(image->fd, &totSec32, sizeof(totSec32), 32);
+    image->totalSec = totSec16 ? totSec16 : totSec32;
+
+    uint32_t totalDataSec = image.totalSec - (image.rsvSecCnt + (image.numFATs * image.secpFAT));
+    image.totalDataClus = totalDataSec / image.sectpClus;
 }
 
 
