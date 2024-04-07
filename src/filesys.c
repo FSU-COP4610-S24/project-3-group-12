@@ -5,6 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <sys/stat.h>
 
 void displayPrompt();
 char *get_input(void);
@@ -23,8 +24,8 @@ struct imageStruct {
     uint32_t rootClus;
     uint32_t totalSec;
     uint32_t totalDataClus;
-    uint32_t entpFat;
-    int size;
+    uint32_t entpFAT;
+    int64_t size;
 }
 
 
@@ -45,7 +46,10 @@ int main(int argc, char *argv[]) {
 
     imageStruct* image = malloc(sizeof(imageStruct));
     image->fd = open(argv[1], 0_RDWR)
-
+    struct stat fileInfo;
+    stat(argv[1], &fileInfo);
+    image->size = (int64_t) fileInfo.st_size;
+    initImage(image);
 
 	while (1) {
 		displayPrompt();
@@ -80,15 +84,15 @@ void initImage(*imageStruct image) {
 
     char buf3[1];
     ssize_t bytes_read3 = pread(image->fd, buf3, 1, 16);
-    image.numFATs = buf3[0];
+    image->numFATs = buf3[0];
 
     char buf4[4];
     ssize_t bytes_read4 = pread(image->fd, buf4, 4, 36);
-    image.secpFAT = buf4[0] + (buf4[1] << 8) + (buf4[2] << 16) + (buf4[3] << 24);
+    image->secpFAT = buf4[0] + (buf4[1] << 8) + (buf4[2] << 16) + (buf4[3] << 24);
 
     char buf5[4];
     ssize_t bytes_read5 = pread(image->fd, buf5, 4, 44);
-    image.rootCluster = buf5[0] + (buf5[1] << 8) + (buf5[2] << 16) + (buf5[3] << 24);
+    image->rootCluster = buf5[0] + (buf5[1] << 8) + (buf5[2] << 16) + (buf5[3] << 24);
 
     uint16_t totSec16;
     uint32_t totSec32;
@@ -96,8 +100,11 @@ void initImage(*imageStruct image) {
     ssize_t bytes_read7 = pread(image->fd, &totSec32, sizeof(totSec32), 32);
     image->totalSec = totSec16 ? totSec16 : totSec32;
 
-    uint32_t totalDataSec = image.totalSec - (image.rsvSecCnt + (image.numFATs * image.secpFAT));
-    image.totalDataClus = totalDataSec / image.sectpClus;
+    uint32_t totalDataSec = image->totalSec - (image->rsvSecCnt + (image->numFATs * image->secpFAT));
+    image->totalDataClus = totalDataSec / image->sectpClus;
+
+    uint32_t fatSizeInBytes = image->secpFAT * image->BpSect;
+    image->entpFAT = fatSizeInBytes / 4;
 }
 
 
