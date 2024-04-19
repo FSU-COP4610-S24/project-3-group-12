@@ -118,15 +118,16 @@ void listDirectories(char * path){
 
 }
 
+
 //assumes file descriptor is set
-void initImage(struct imageStruct *image) {
+void initImage(struct imageStruct * image) {
     char buf0[2];
     ssize_t bytes_read0 = pread(image->fd, buf0, 2, 11);
     image->BpSect = buf0[0] + buf0[1] << 8;
 
     char buf1[1];
     ssize_t bytes_read1 = pread(image->fd, buf1, 1, 13);
-    image->sectpClus = buf1[0] << 8;
+    image->sectpClus = buf1[0];
 
     char buf2[2];
     ssize_t bytes_read2 = pread(image->fd, buf2, 2, 14);
@@ -162,7 +163,7 @@ void initImage(struct imageStruct *image) {
 }
 
 //info command
-void printImageStruct(const struct imageStruct *img) {
+void printImageStruct(struct imageStruct *img) {
     printf("bytes per sector: %" PRIu16 "\n", img->BpSect);
     printf("sectors per cluster: %" PRIu8 "\n", img->sectpClus);
     printf("root cluster: %" PRIu32 "\n", img->rootClus);
