@@ -6,7 +6,13 @@
 #include <unistd.h>
 #include <inttypes.h>
 #include <sys/stat.h>
-#include <dirent.h> 
+
+#define ATTR_READ_ONLY   0x01
+#define ATTR_HIDDEN      0x02
+#define ATTR_SYSTEM      0x04
+#define ATTR_VOLUME_ID   0x08
+#define ATTR_DIRECTORY   0x10
+#define ATTR_ARCHIVE     0x20
 
 void displayPrompt();
 char *get_input(void);
@@ -14,6 +20,10 @@ tokenlist *new_tokenlist(void);
 void add_token(tokenlist *tokens, char *item);
 tokenlist *get_tokens(char *input);
 void free_tokens(tokenlist *tokens);
+
+#define BYTES_PER_SECTOR 512
+#define DIR_ENTRY_SIZE 32
+#define ROOT_CLUSTER 2
 
 struct imageStruct {
     int fd;
@@ -28,99 +38,136 @@ struct imageStruct {
     uint32_t entpFAT;
     int64_t size;
 };
+
 struct directoryEntry {
-	uint8_t name[11];
-	uint8_t attribute;
-	uint8_t res;
-	uint8_t creationTimeTenth;
-	uint16_t creationTime;
-	uint16_t creationDate;
-	uint16_t lastAccessDate;
-	uint16_t fstClusterHi;
-	uint16_t writeTime;
-	uint16_t wrtDate;
-	uint16_t fstClusterLo;
-	uint16_t dirFileSize;
+    uint8_t name[11];
+    uint8_t attribute;
+    uint8_t res;
+    uint8_t creationTimeTenth;
+    uint16_t creationTime;
+    uint16_t creationDate;
+    uint16_t lastAccessDate;
+    uint16_t fstClusterHi;
+    uint16_t writeTime;
+    uint16_t wrtDate;
+    uint16_t fstClusterLo;
+    uint16_t dirFileSize;
 };
 
-struct directoryEntry * directoryEntries = NULL;
-
+struct directoryEntry *directoryEntries = NULL;
+int numDirectoryEntries = 0;
 
 int main(int argc, char *argv[]) {
+    char command[100];
+    int status;
 
-	char command[100];
-	int status;
-	
-	//checking for right arguments
-	if (argc != 2) {
-		printf("Argument error: ./filesys <FAT32 image file>\n");
-		return 1;
-	}
-	
-	sprintf(command, "sudo mount -o loop %s ./mnt ", argv[1]);
-	status = system(command);
-	if(status == -1) {
-		perror("mount failed");
-		return 1;
-	}
+    if (argc != 2) {
+        printf("Argument error: ./filesys <FAT32 image file>\n");
+        return 1;
+    }
 
-    struct imageStruct* image = malloc(sizeof(struct imageStruct));
+    sprintf(command, "sudo mount -o loop %s ./mnt ", argv[1]);
+    status = system(command);
+    if (status == -1) {
+        perror("mount failed");
+        return 1;
+    }
+
+    struct imageStruct *image = malloc(sizeof(struct imageStruct));
     image->fd = open(argv[1], O_RDWR);
     struct stat fileInfo;
     stat(argv[1], &fileInfo);
-    image->size = (int64_t) fileInfo.st_size;
+    image->size = (int64_t)fileInfo.st_size;
     initImage(image);
 
-	while (1) {
-		displayPrompt();
-		char *input = get_input();
-		tokenlist *tokens = get_tokens(input);
-		
-		//execution
-        if(strcmp(tokens->items[0], "exit") == 0) {
+    while (1) {
+        displayPrompt();
+        char *input = get_input();
+        tokenlist *tokens = get_tokens(input);
+
+        if (strcmp(tokens->items[0], "exit") == 0) {
             exit;
         }
-        if(strcmp(tokens->items[0], "info") == 0) {
+        if (strcmp(tokens->items[0], "info") == 0) {
             printImageStruct(image);
         }
-        if(strcmp(tokens->items[0], "ls") == 0){
-        	if(tokens->size >= 2){
-        		listDirectories(tokens->items[1]);
-        	}
-        	else{
-        		listDirectories(".");
-        	}
+        if (strcmp(tokens->items[0], "ls") == 0) {
+            if (tokens->size >= 2) {
+                listDirectoryEntries(argv[1], tokens->items[1]);
+            } else {
+                listDirectoryEntries(argv[1], ".");
+            }
         }
-		
-		free(input);
-		free_tokens(tokens);
-	}
+
+        free(input);
+        free_tokens(tokens);
+    }
 
     return 0;
 }
 
-
-void listDirectories(char * path){
-	DIR *dir;
-	struct dirent *entry;
-	dir = opendir(path);
-
-	if (dir == NULL){
-		perror("cannot open directory");
-		return;
+uint32_t getClusterNumber(char *path){
+	//if no path specified use root for now
+	if (strcmp(path,"") == 0){
+		return 2;
 	}
-	
-	while ((entry = readdir(dir)) != NULL){
-		printf("%s\n", entry->d_name);
-	}
-	
-	closedir(dir);
-
 }
 
+void loadDirectoryEntries(const char *imageFile, uint32_t clusterNumber) {
+    FILE *file = fopen(imageFile, "rb");
+    if (file == NULL) {
+        perror("Error opening image file");
+        return;
+    }
+
+    fseek(file, clusterNumber * BYTES_PER_SECTOR, SEEK_SET);
+
+    struct directoryEntry entry;
+    while (fread(&entry, DIR_ENTRY_SIZE, 1, file) == 1) {
+        directoryEntries = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(struct directoryEntry));
+        if (directoryEntries == NULL) {
+            perror("Error allocating memory");
+            fclose(file);
+            return;
+        }
+
+        if ((entry.attribute != (0x01 | 0x02 | 0x04 | 0x08)) &&
+    (entry.name[0] != 0xE5 && entry.name[0] != 0x00)) {
+            memcpy(&directoryEntries[numDirectoryEntries], &entry, sizeof(struct directoryEntry));
+            numDirectoryEntries++;
+        }
+    }
+
+    fclose(file);
+}
+
+void listDirectoryEntries(const char *imageFile, const char *path) {
+    //compute the cluster number for the specified directory path
+    uint32_t currentCluster = getClusterNumber(path);
+    if (currentCluster == 0) {
+        printf("Error: Unable to compute cluster number for path %s\n", path);
+        return;
+    }
+
+    //store the directory entries in global list
+    loadDirectoryEntries(imageFile, currentCluster);
+
+    // Print directory entries from the global variable
+    for (int i = 0; i < numDirectoryEntries; i++) {
+        char name[11];
+        memcpy(name, directoryEntries[i].name, 11);
+        name[11] = '\0'; 
+        printf("%s\n", name);
+    }
+
+    //reset global list
+    free(directoryEntries);
+    directoryEntries = NULL;
+    numDirectoryEntries = 0;
+}
 
 //assumes file descriptor is set
-void initImage(struct imageStruct * image) {
+void initImage(struct imageStruct *image) {
     char buf0[2];
     ssize_t bytes_read0 = pread(image->fd, buf0, 2, 11);
     image->BpSect = buf0[0] + buf0[1] << 8;
@@ -152,7 +199,7 @@ void initImage(struct imageStruct * image) {
     ssize_t bytes_read6 = pread(image->fd, &totSec16, sizeof(totSec16), 19);
     ssize_t bytes_read7 = pread(image->fd, &totSec32, sizeof(totSec32), 32);
     image->totalSec = totSec16 ? totSec16 : totSec32;
-    
+
     printImageStruct(image);
 
     uint32_t totalDataSec = image->totalSec - (image->rsvSecCnt + (image->numFATs * image->secpFAT));
@@ -172,12 +219,10 @@ void printImageStruct(struct imageStruct *img) {
     printf("size of image (in bytes): %" PRId64 "\n", img->size);
 }
 
-
 //user input related functions
-
-void displayPrompt(){
-    char * user = getenv("USER");
-    char * machine = getenv("MACHINE");
+void displayPrompt() {
+    char *user = getenv("USER");
+    char *machine = getenv("MACHINE");
     char pwd[512];
     getcwd(pwd, sizeof(pwd));
     printf("%s@%s:%s>", user, machine, pwd);
@@ -187,8 +232,7 @@ char *get_input(void) {
     char *buffer = NULL;
     int bufsize = 0;
     char line[5];
-    while (fgets(line, 5, stdin) != NULL)
-    {
+    while (fgets(line, 5, stdin) != NULL) {
         int addby = 0;
         char *newln = strchr(line, '\n');
         if (newln != NULL)
@@ -216,12 +260,10 @@ tokenlist *new_tokenlist(void) {
 
 void add_token(tokenlist *tokens, char *item) {
     int i = tokens->size;
-
     tokens->items = (char **)realloc(tokens->items, (i + 2) * sizeof(char *));
     tokens->items[i] = (char *)malloc(strlen(item) + 1);
     tokens->items[i + 1] = NULL;
     strcpy(tokens->items[i], item);
-
     tokens->size += 1;
 }
 
@@ -230,8 +272,7 @@ tokenlist *get_tokens(char *input) {
     strcpy(buf, input);
     tokenlist *tokens = new_tokenlist();
     char *tok = strtok(buf, " ");
-    while (tok != NULL)
-    {
+    while (tok != NULL) {
         add_token(tokens, tok);
         tok = strtok(NULL, " ");
     }
