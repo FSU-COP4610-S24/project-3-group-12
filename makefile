@@ -9,7 +9,7 @@ DIRS := $(OBJ)/ mnt/
 EXEC := ./$(EXECUTABLE)
 
 CC := gcc
-CFLAGS := -g -Wall -std=c99 $(INCS)
+CFLAGS := -g -w -std=c99 $(INCS)
 LDFLAGS :=
 
 all: $(EXEC)
