@@ -20,6 +20,7 @@ tokenlist *new_tokenlist(void);
 void add_token(tokenlist *tokens, char *item);
 tokenlist *get_tokens(char *input);
 void free_tokens(tokenlist *tokens);
+uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name);
 
 #define BYTES_PER_SECTOR 512
 #define DIR_ENTRY_SIZE 32
@@ -36,24 +37,21 @@ struct imageStruct {
     uint32_t totalSec;
     uint32_t totalDataClus;
     uint32_t entpFAT;
+    uint32_t dataStartOffset;
     int64_t size;
 };
 
-struct directoryEntry {
-    uint8_t name[11];
-    uint8_t attribute;
-    uint8_t res;
-    uint8_t creationTimeTenth;
-    uint16_t creationTime;
-    uint16_t creationDate;
-    uint16_t lastAccessDate;
-    uint16_t fstClusterHi;
-    uint16_t writeTime;
-    uint16_t wrtDate;
-    uint16_t fstClusterLo;
-    uint16_t dirFileSize;
-};
+typedef struct __attribute__((packed)) directoryEntry {
+    char DIR_Name[11];
+    uint8_t DIR_Attr;
+    char padding_1[8]; //unused fields
+    uint16_t DIR_FstClusHI;
+    char padding_2[4]; //unused fields
+    uint16_t DIR_FstClusLO;
+    uint32_t DIR_FileSize;
+} directoryEntry;
 
+struct imageStruct *image;
 struct directoryEntry *directoryEntries = NULL;
 int numDirectoryEntries = 0;
 
@@ -73,7 +71,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    struct imageStruct *image = malloc(sizeof(struct imageStruct));
+    image = malloc(sizeof(struct imageStruct));
     image->fd = open(argv[1], O_RDWR);
     struct stat fileInfo;
     stat(argv[1], &fileInfo);
@@ -93,9 +91,9 @@ int main(int argc, char *argv[]) {
         }
         if (strcmp(tokens->items[0], "ls") == 0) {
             if (tokens->size >= 2) {
-                listDirectoryEntries(argv[1], tokens->items[1]);
+                listDirectoryEntries(tokens->items[1]);
             } else {
-                listDirectoryEntries(argv[1], ".");
+                listDirectoryEntries("");
             }
         }
 
@@ -108,41 +106,94 @@ int main(int argc, char *argv[]) {
 }
 
 uint32_t getClusterNumber(char *path){
-	//if no path specified use root for now
-	if (strcmp(path,"") == 0){
-		return 2;
+
+	uint32_t currentCluster = image->rootClus;
+	char *token = strtok(path, "/");
+
+	while (token != NULL){
+		uint32_t nextCluster = findClusterInDirectory(currentCluster,token);
+		
+		if (nextCluster == 0){
+			printf("Directory '%s' not found.\n", token);
+            		return 0;
+		}
+		currentCluster = nextCluster;
+        	token = strtok(NULL, "/");
 	}
+	return currentCluster;
 }
 
-void loadDirectoryEntries(const char *imageFile, uint32_t clusterNumber) {
-    FILE *file = fopen(imageFile, "rb");
-    if (file == NULL) {
-        perror("Error opening image file");
-        return;
-    }
-
-    fseek(file, clusterNumber * BYTES_PER_SECTOR, SEEK_SET);
-
-    struct directoryEntry entry;
-    while (fread(&entry, DIR_ENTRY_SIZE, 1, file) == 1) {
-        directoryEntries = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(struct directoryEntry));
+uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
+    //load directory entries for the specified cluster
+    	loadDirectoryEntries(directoryCluster);
         if (directoryEntries == NULL) {
-            perror("Error allocating memory");
-            fclose(file);
-            return;
+        	printf("Error: directoryEntries is NULL.\n");
+        	return;
         }
+    //iterate through directory entries to find the matching one
 
-        if ((entry.attribute != (0x01 | 0x02 | 0x04 | 0x08)) &&
-    (entry.name[0] != 0xE5 && entry.name[0] != 0x00)) {
-            memcpy(&directoryEntries[numDirectoryEntries], &entry, sizeof(struct directoryEntry));
-            numDirectoryEntries++;
+    for (int i = 0; i < numDirectoryEntries; ++i) {
+        if (strcmp(directoryEntries[i].DIR_Name, name) == 0) {
+        
+            if (directoryEntries[i].DIR_Attr == ATTR_DIRECTORY) {
+                return directoryEntries[i].DIR_FstClusHI;
+            } else {
+                printf("'%s' is not a directory.\n", name);
+                return 0;
+            }
         }
     }
 
-    fclose(file);
+    printf("Directory '%s' not found.\n", name);
+    return 0;
+
 }
 
-void listDirectoryEntries(const char *imageFile, const char *path) {
+directoryEntry* encode_dir_entry(int fat32_fd, uint32_t offset) {
+    directoryEntry *dentry = (directoryEntry*)malloc(sizeof(directoryEntry));
+    ssize_t rd_bytes = pread(fat32_fd, (void*)dentry, sizeof(directoryEntry), offset);
+
+    if (rd_bytes != sizeof(directoryEntry)) {
+        fprintf(stderr, "Error: Failed to read directory entry at offset 0x%x\n", offset);
+        free(dentry);
+        return NULL;
+    }
+
+    return dentry;
+}
+
+
+void loadDirectoryEntries(uint32_t clusterNumber) {
+    int fat32_fd = image->fd;
+    uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * image->BpSect;
+
+    //clear existing directory entries if any
+    if (directoryEntries != NULL) {
+        free(directoryEntries);
+        directoryEntries = NULL;
+    }
+
+    //read directory entries from the current cluster
+    while (1) {
+        directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
+        if (entry == NULL || entry->DIR_Name[0] == 0x00) {
+            break;
+        }
+
+        if (entry->DIR_Name[0] != 0xE5 && entry->DIR_Name[0] != 0x20) { //exclude deleted and invalid entries
+            directoryEntries = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(directoryEntry));
+            if (directoryEntries == NULL) {
+                perror("Error reallocating memory for directory entries");
+                return;
+            }
+            directoryEntries[numDirectoryEntries++] = *entry;
+        }
+        offset += sizeof(directoryEntry);
+    }
+
+}
+
+void listDirectoryEntries(const char *path) {
     //compute the cluster number for the specified directory path
     uint32_t currentCluster = getClusterNumber(path);
     if (currentCluster == 0) {
@@ -151,14 +202,14 @@ void listDirectoryEntries(const char *imageFile, const char *path) {
     }
 
     //store the directory entries in global list
-    loadDirectoryEntries(imageFile, currentCluster);
+    loadDirectoryEntries(currentCluster);
 
-    // Print directory entries from the global variable
+    //print directory entries from the global variable
     for (int i = 0; i < numDirectoryEntries; i++) {
-        char name[11];
-        memcpy(name, directoryEntries[i].name, 11);
-        name[11] = '\0'; 
-        printf("%s\n", name);
+	char name[11];
+	memcpy(name, directoryEntries[i].DIR_Name, 11);
+	name[11] = '\0'; 
+	printf("%s\n", name);
     }
 
     //reset global list
@@ -168,7 +219,7 @@ void listDirectoryEntries(const char *imageFile, const char *path) {
 }
 
 //assumes file descriptor is set
-void initImage(struct imageStruct *image) {
+void initImage() {
     char buf0[2];
     ssize_t bytes_read0 = pread(image->fd, buf0, 2, 11);
     image->BpSect = buf0[0] + buf0[1] << 8;
@@ -205,16 +256,17 @@ void initImage(struct imageStruct *image) {
     uint32_t fatSizeInBytes = image->secpFAT * image->BpSect;
     image->entpFAT = fatSizeInBytes / 4;
     
+    image->dataStartOffset = image->BpSect * (image->rsvSecCnt + image->secpFAT * image->numFATs);
 }
 
 //info command
-void printImageStruct(struct imageStruct *img) {
-    printf("bytes per sector: %" PRIu16 "\n", img->BpSect);
-    printf("sectors per cluster: %" PRIu8 "\n", img->sectpClus);
-    printf("root cluster: %" PRIu32 "\n", img->rootClus);
-    printf("total # of clusters in data region: %" PRIu32 "\n", img->totalDataClus);
-    printf("# of entries in one FAT: %" PRIu32 "\n", img->entpFAT);
-    printf("size of image (in bytes): %" PRId64 "\n", img->size);
+void printImageStruct() {
+    printf("bytes per sector: %" PRIu16 "\n", image->BpSect);
+    printf("sectors per cluster: %" PRIu8 "\n", image->sectpClus);
+    printf("root cluster: %" PRIu32 "\n", image->rootClus);
+    printf("total # of clusters in data region: %" PRIu32 "\n", image->totalDataClus);
+    printf("# of entries in one FAT: %" PRIu32 "\n", image->entpFAT);
+    printf("size of image (in bytes): %" PRId64 "\n", image->size);
 }
 
 //user input related functions
