@@ -134,7 +134,6 @@ uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
 
     for (int i = 0; i < numDirectoryEntries; ++i) {
         if (strcmp(directoryEntries[i].DIR_Name, name) == 0) {
-        
             if (directoryEntries[i].DIR_Attr == ATTR_DIRECTORY) {
                 return directoryEntries[i].DIR_FstClusHI;
             } else {
@@ -144,7 +143,6 @@ uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
         }
     }
 
-    printf("Directory '%s' not found.\n", name);
     return 0;
 
 }
@@ -162,6 +160,23 @@ directoryEntry* encode_dir_entry(int fat32_fd, uint32_t offset) {
     return dentry;
 }
 
+int is_valid_name(uint8_t *name) {
+    //check if the first character
+    if (name[0] == 0xE5 || name[0] == 0x00 || name[0] == 0x20) {
+        return 0; // Invalid name
+    }
+    
+    //check for other illegal chars
+    for (int i = 0; i < 11; i++) {
+        if (name[i] < 0x20 || name[i] == 0x22 || name[i] == 0x2A || name[i] == 0x2B || name[i] == 0x2C || name[i] == 0x2E || 
+            name[i] == 0x2F || name[i] == 0x3A || name[i] == 0x3B || name[i] == 0x3C || name[i] == 0x3D || name[i] == 0x3E || 
+            name[i] == 0x3F || name[i] == 0x5B || name[i] == 0x5C || name[i] == 0x5D || name[i] == 0x7C) {
+            return 0;
+        }
+    }
+    
+    return 1;
+}
 
 void loadDirectoryEntries(uint32_t clusterNumber) {
     int fat32_fd = image->fd;
@@ -174,22 +189,36 @@ void loadDirectoryEntries(uint32_t clusterNumber) {
     }
 
     //read directory entries from the current cluster
-    while (1) {
-        directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
-        if (entry == NULL || entry->DIR_Name[0] == 0x00) {
-            break;
-        }
+	while (1) {
+	    directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
+	    if (entry == NULL || entry->DIR_Name[0] == 0x00) {
+		break; // End of directory entries
+	    }
 
-        if (entry->DIR_Name[0] != 0xE5 && entry->DIR_Name[0] != 0x20) { //exclude deleted and invalid entries
-            directoryEntries = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(directoryEntry));
-            if (directoryEntries == NULL) {
-                perror("Error reallocating memory for directory entries");
-                return;
-            }
-            directoryEntries[numDirectoryEntries++] = *entry;
-        }
-        offset += sizeof(directoryEntry);
-    }
+	    // Check if the entry is a valid file or directory name
+	    if (is_valid_name(entry->DIR_Name)) {
+		// Allocate memory for directoryEntries if it's NULL
+		if (directoryEntries == NULL) {
+		    directoryEntries = malloc(sizeof(directoryEntry));
+		    if (directoryEntries == NULL) {
+		        perror("Error allocating memory for directory entries");
+		        return;
+		    }
+		} else {
+		    // Reallocate memory for directoryEntries
+		    directoryEntry *temp = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(directoryEntry));
+		    if (temp == NULL) {
+		        perror("Error reallocating memory for directory entries");
+		        return;
+		    }
+		    directoryEntries = temp;
+		}
+		
+		// Copy the entry to directoryEntries
+		directoryEntries[numDirectoryEntries++] = *entry;
+	    }
+	    offset += sizeof(directoryEntry);
+	}
 
 }
 
