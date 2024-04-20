@@ -125,17 +125,30 @@ uint32_t getClusterNumber(char *path){
 
 uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
     //load directory entries for the specified cluster
-    	loadDirectoryEntries(directoryCluster);
-        if (directoryEntries == NULL) {
-        	printf("Error: directoryEntries is NULL.\n");
-        	return;
-        }
-    //iterate through directory entries to find the matching one
+    loadDirectoryEntries(directoryCluster);
 
+    if (directoryEntries == NULL) {
+        printf("Error: directoryEntries is NULL.\n");
+        return 0; // Return an appropriate value indicating error
+    }
+
+    //iterate through directory entries to find the matching one
     for (int i = 0; i < numDirectoryEntries; ++i) {
-        if (strcmp(directoryEntries[i].DIR_Name, name) == 0) {
+        //compare the directory entry name with the input name
+        int j;
+        for (j = 0; j < 11; ++j) {
+            if (directoryEntries[i].DIR_Name[j] == ' ' && name[j] == '\0') {
+                break;
+            }
+            if (directoryEntries[i].DIR_Name[j] != name[j]) {
+                break;
+            }
+        }
+        if (j == 11 || (j < 11 && directoryEntries[i].DIR_Name[j] == ' ')) {
+            //match found check if its a directory and calculate and return cluster number
             if (directoryEntries[i].DIR_Attr == ATTR_DIRECTORY) {
-                return directoryEntries[i].DIR_FstClusHI;
+       	uint32_t cluster_num = (uint32_t)(((uint32_t)directoryEntries[i].DIR_FstClusHI << 16) | directoryEntries[i].DIR_FstClusLO);
+            	return cluster_num;
             } else {
                 printf("'%s' is not a directory.\n", name);
                 return 0;
@@ -144,8 +157,8 @@ uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
     }
 
     return 0;
-
 }
+
 
 directoryEntry* encode_dir_entry(int fat32_fd, uint32_t offset) {
     directoryEntry *dentry = (directoryEntry*)malloc(sizeof(directoryEntry));
@@ -161,12 +174,12 @@ directoryEntry* encode_dir_entry(int fat32_fd, uint32_t offset) {
 }
 
 int is_valid_name(uint8_t *name) {
-    //check if the first character
-    if (name[0] == 0xE5 || name[0] == 0x00 || name[0] == 0x20) {
-        return 0; // Invalid name
+    //check first character to see if
+    if (name[0] == 0xE5) {
+        return 0; 
     }
     
-    //check for other illegal chars
+    // Check for other illegal characters
     for (int i = 0; i < 11; i++) {
         if (name[i] < 0x20 || name[i] == 0x22 || name[i] == 0x2A || name[i] == 0x2B || name[i] == 0x2C || name[i] == 0x2E || 
             name[i] == 0x2F || name[i] == 0x3A || name[i] == 0x3B || name[i] == 0x3C || name[i] == 0x3D || name[i] == 0x3E || 
