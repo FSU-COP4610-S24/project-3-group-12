@@ -14,17 +14,17 @@
 #define ATTR_DIRECTORY   0x10
 #define ATTR_ARCHIVE     0x20
 
-void displayPrompt();
+void displayPrompt(char * imageFileName, char *currentDirectory);
 char *get_input(void);
 tokenlist *new_tokenlist(void);
 void add_token(tokenlist *tokens, char *item);
 tokenlist *get_tokens(char *input);
 void free_tokens(tokenlist *tokens);
+char* getDirectoryNameByCluster(uint32_t parentCluster, uint32_t targetCluster);
+bool changeDirectory(const char *dirname);
+uint32_t getClusterNumber(char *path);
 uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name);
 
-#define BYTES_PER_SECTOR 512
-#define DIR_ENTRY_SIZE 32
-#define ROOT_CLUSTER 2
 
 struct imageStruct {
     int fd;
@@ -55,6 +55,10 @@ struct imageStruct *image;
 struct directoryEntry *directoryEntries = NULL;
 int numDirectoryEntries = 0;
 
+//used to manage what directory we are in
+char* currentDirectory;
+int currentClusterNumber = 2;
+
 int main(int argc, char *argv[]) {
     char command[100];
     int status;
@@ -79,7 +83,7 @@ int main(int argc, char *argv[]) {
     initImage(image);
 
     while (1) {
-        displayPrompt();
+        displayPrompt(argv[1], currentDirectory);
         char *input = get_input();
         tokenlist *tokens = get_tokens(input);
 
@@ -96,18 +100,74 @@ int main(int argc, char *argv[]) {
                 listDirectoryEntries("");
             }
         }
+        if (strcmp(tokens->items[0], "cd") == 0) {
+            if (tokens->size >= 2) {
+		changeDirectory(tokens->items[1]);
+           }
+        }
 
         free(input);
         free_tokens(tokens);
     }
-    
 
     return 0;
 }
 
-uint32_t getClusterNumber(char *path){
+bool compareDirectoryEntryName(const char *dirName, const char *inputName) {
+    //iterate through each character in the directory entry name
+    for (int j = 0; j < 11; ++j) {
+        if (dirName[j] == ' ' && inputName[j] == '\0') {
+            return true;
+        }
+        if (dirName[j] != inputName[j]) {
+            return false;
+        }
+    }
+    return true;
+}
 
-	uint32_t currentCluster = image->rootClus;
+bool changeDirectory(const char *dirname) {
+    uint32_t newCluster = getClusterNumber(dirname);
+    if (newCluster == 0) {
+        return false;
+    }
+
+    //update global cluster var
+    currentClusterNumber = newCluster;
+    uint32_t parentCluster = currentClusterNumber;
+
+    char *newPath = NULL;
+    if (currentDirectory != NULL) {
+        //allocate memory for the new path with / appended to currentDirectory
+        newPath = malloc(strlen(currentDirectory) + strlen(dirname) + 2);
+        if (newPath == NULL) {
+            printf("Memory allocation error\n");
+            return false;
+        }
+        //construct the new path with / appended to currentDirectory
+        strcpy(newPath, currentDirectory);
+        strcat(newPath, "/");
+        strcat(newPath, dirname);
+    } else {
+        //allocate memory for just the dirname
+        newPath = malloc(strlen(dirname) + 1);
+        if (newPath == NULL) {
+            printf("Memory allocation error\n");
+            return false;
+        }
+        strcpy(newPath, dirname);
+    }
+
+    //update global currentDirectory var
+    free(currentDirectory);
+    currentDirectory = newPath;
+
+    return true;
+}
+
+uint32_t getClusterNumber(char *path){
+	char *path_copy = strdup(path);
+	uint32_t currentCluster = currentClusterNumber;
 	char *token = strtok(path, "/");
 
 	while (token != NULL){
@@ -134,21 +194,10 @@ uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
 
     //iterate through directory entries to find the matching one
     for (int i = 0; i < numDirectoryEntries; ++i) {
-        //compare the directory entry name with the input name
-        int j;
-        for (j = 0; j < 11; ++j) {
-            if (directoryEntries[i].DIR_Name[j] == ' ' && name[j] == '\0') {
-                break;
-            }
-            if (directoryEntries[i].DIR_Name[j] != name[j]) {
-                break;
-            }
-        }
-        if (j == 11 || (j < 11 && directoryEntries[i].DIR_Name[j] == ' ')) {
-            //match found check if its a directory and calculate and return cluster number
+        if (compareDirectoryEntryName(directoryEntries[i].DIR_Name, name)) {
             if (directoryEntries[i].DIR_Attr == ATTR_DIRECTORY) {
-       	uint32_t cluster_num = (uint32_t)(((uint32_t)directoryEntries[i].DIR_FstClusHI << 16) | directoryEntries[i].DIR_FstClusLO);
-            	return cluster_num;
+                uint32_t cluster_num = (uint32_t)(((uint32_t)directoryEntries[i].DIR_FstClusHI << 16) | directoryEntries[i].DIR_FstClusLO);
+                return cluster_num;
             } else {
                 printf("'%s' is not a directory.\n", name);
                 return 0;
@@ -174,12 +223,12 @@ directoryEntry* encode_dir_entry(int fat32_fd, uint32_t offset) {
 }
 
 int is_valid_name(uint8_t *name) {
-    //check first character to see if
+
     if (name[0] == 0xE5) {
         return 0; 
     }
     
-    // Check for other illegal characters
+    //check for other illegal characters
     for (int i = 0; i < 11; i++) {
         if (name[i] < 0x20 || name[i] == 0x22 || name[i] == 0x2A || name[i] == 0x2B || name[i] == 0x2C || name[i] == 0x2E || 
             name[i] == 0x2F || name[i] == 0x3A || name[i] == 0x3B || name[i] == 0x3C || name[i] == 0x3D || name[i] == 0x3E || 
@@ -187,62 +236,62 @@ int is_valid_name(uint8_t *name) {
             return 0;
         }
     }
-    
     return 1;
 }
 
 void loadDirectoryEntries(uint32_t clusterNumber) {
     int fat32_fd = image->fd;
-    uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * image->BpSect;
+    printf("Printing computed cluster number: %d\n", clusterNumber);
+    uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * image->sectpClus * image->BpSect;
+    printf("Printing offset: %02x\n", offset);
 
-    //clear existing directory entries if any
+    //reset global list of entries
     if (directoryEntries != NULL) {
         free(directoryEntries);
         directoryEntries = NULL;
     }
+    numDirectoryEntries = 0;
 
     //read directory entries from the current cluster
-	while (1) {
-	    directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
-	    if (entry == NULL || entry->DIR_Name[0] == 0x00) {
-		break; // End of directory entries
-	    }
+    while (1) {
+        directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
+        if (entry == NULL || entry->DIR_Name[0] == 0x00) {
+            break; //end of directory entries
+        }
 
-	    // Check if the entry is a valid file or directory name
-	    if (is_valid_name(entry->DIR_Name)) {
-		// Allocate memory for directoryEntries if it's NULL
-		if (directoryEntries == NULL) {
-		    directoryEntries = malloc(sizeof(directoryEntry));
-		    if (directoryEntries == NULL) {
-		        perror("Error allocating memory for directory entries");
-		        return;
-		    }
-		} else {
-		    // Reallocate memory for directoryEntries
-		    directoryEntry *temp = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(directoryEntry));
-		    if (temp == NULL) {
-		        perror("Error reallocating memory for directory entries");
-		        return;
-		    }
-		    directoryEntries = temp;
-		}
-		
-		// Copy the entry to directoryEntries
-		directoryEntries[numDirectoryEntries++] = *entry;
-	    }
-	    offset += sizeof(directoryEntry);
-	}
+        //check if the entry is a valid file or directory name
+        if (is_valid_name(entry->DIR_Name)) {
+            //allocate memory for directoryEntries if it's NULL
+            if (directoryEntries == NULL) {
+                directoryEntries = malloc(sizeof(directoryEntry));
+                if (directoryEntries == NULL) {
+                    perror("Error allocating memory for directory entries");
+                    return;
+                }
+            } else {
+                //reallocate memory for directoryEntries
+                directoryEntry *temp = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(directoryEntry));
+                if (temp == NULL) {
+                    perror("Error reallocating memory for directory entries");
+                    return;
+                }
+                directoryEntries = temp;
+            }
 
+            //copy the entry to directoryEntries
+            directoryEntries[numDirectoryEntries++] = *entry;
+        }
+        offset += sizeof(directoryEntry);
+    }
 }
 
 void listDirectoryEntries(const char *path) {
+    
     //compute the cluster number for the specified directory path
     uint32_t currentCluster = getClusterNumber(path);
     if (currentCluster == 0) {
-        printf("Error: Unable to compute cluster number for path %s\n", path);
         return;
     }
-
     //store the directory entries in global list
     loadDirectoryEntries(currentCluster);
 
@@ -253,11 +302,7 @@ void listDirectoryEntries(const char *path) {
 	name[11] = '\0'; 
 	printf("%s\n", name);
     }
-
-    //reset global list
-    free(directoryEntries);
-    directoryEntries = NULL;
-    numDirectoryEntries = 0;
+    
 }
 
 //assumes file descriptor is set
@@ -312,14 +357,12 @@ void printImageStruct() {
 }
 
 //user input related functions
-void displayPrompt() {
-    char *user = getenv("USER");
-    char *machine = getenv("MACHINE");
-    char pwd[512];
-    getcwd(pwd, sizeof(pwd));
-    printf("%s@%s:%s>", user, machine, pwd);
+void displayPrompt(char *imageFileName, char *currentDirectory) {
+	if (currentDirectory == NULL){
+		currentDirectory = "";
+	} 
+    printf("%s/%s> ", imageFileName, currentDirectory);
 }
-
 char *get_input(void) {
     char *buffer = NULL;
     int bufsize = 0;
