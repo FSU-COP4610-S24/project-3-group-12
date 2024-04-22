@@ -20,10 +20,14 @@ tokenlist *new_tokenlist(void);
 void add_token(tokenlist *tokens, char *item);
 tokenlist *get_tokens(char *input);
 void free_tokens(tokenlist *tokens);
+void setFATEntry(uint32_t clusterNumber, uint32_t value);
 char* getDirectoryNameByCluster(uint32_t parentCluster, uint32_t targetCluster);
 bool changeDirectory(const char *dirname);
+bool makeDirectory(const char *dirname);
 uint32_t getClusterNumber(char *path);
+uint32_t getFATEntry(uint32_t clusterNumber);
 uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name);
+uint32_t allocateNewCluster();
 
 struct imageStruct {
     int fd;
@@ -107,7 +111,12 @@ int main(int argc, char *argv[]) {
 		changeDirectory(tokens->items[1]);
            }
         }
-
+	if (strcmp(tokens->items[0], "mkdir") == 0) {
+	    if (tokens->size >= 2) {
+		makeDirectory(tokens->items[1]);
+	    }
+	}
+	    
         free(input);
         free_tokens(tokens);
     }
@@ -203,6 +212,39 @@ bool changeDirectory(const char *dirname) {
     return true;
 }
 
+bool makeDirectory(const char *dirname) {
+    for (int i = 0; i < numDirectoryEntries; i++) {
+	struct directoryEntry *dentry = &directoryEntries[i];
+
+	if (strncmp(dentry->DIR_Name, dirname, 11) == 0) {
+	    printf("Error: Directory already exists.\n");
+	    return false;
+	}
+    }
+
+    uint32_t newCluster = allocateNewCluster();
+    if (newCluster == 0) {
+	printf("Error: No free clusters.\n");
+        return false;
+    }
+
+    for (int i = 0; i < numDirectoryEntries; i++) {
+        struct directoryEntry *dentry = &directoryEntries[i];
+	if (dentry->DIR_Name[0] == 0x00 || dentry->DIR_Name[0] == 0xE5) {
+		
+            strncpy(dentry->DIR_Name, dirname, 11);
+            dentry->DIR_Attr = ATTR_DIRECTORY;
+            dentry->DIR_FstClusHI = (newCluster >> 16) & 0xFFF;
+            dentry->DIR_FstClusLO = newCluster & 0xFFFF;
+            dentry->DIR_FileSize = 0;
+	    return true;
+	}
+    }
+    
+    printf("Error: No free directory entries.\n");
+    return false;
+}
+
 uint32_t getClusterNumber(char *path){
 	char *path_copy = strdup(path);
 	uint32_t currentCluster = currentClusterNumber;
@@ -244,6 +286,35 @@ uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
     }
 
     return 0;
+}
+
+uint32_t getFATEntry(uint32_t clusterNumber) {
+    uint32_t offset = image->rsvSecCnt * image->BpSect + clusterNumber * 4;
+    uint32_t fatEntry;
+
+    lseek(image->fd, offset, SEEK_SET);
+    read(image->fd, &fatEntry, 4);
+
+    return fatEntry & 0x0FFFFFFF;
+}
+
+uint32_t allocateNewCluster() {
+    for (uint32_t i = 2; i < image->totalDataClus; i++) {
+	uint32_t fatEntry = getFATEntry(i);
+	if (fatEntry == 0) {
+	    setFATEntry(i, 0x0FFFFFFF);
+	    return i;
+	}
+    }
+    printf("Error: No free clusters.\n");
+    return 0;
+}
+
+void setFATEntry(uint32_t clusterNumber, uint32_t value) {
+    uint32_t offset = image->rsvSecCnt * image->BpSect + clusterNumber * 4;
+
+    lseek(image->fd, offset, SEEK_SET);
+    write(image->fd, &value, 4);
 }
 
 
