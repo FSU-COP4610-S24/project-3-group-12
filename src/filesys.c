@@ -332,21 +332,9 @@ directoryEntry* encode_dir_entry(int fat32_fd, uint32_t offset) {
 }
 
 int is_valid_name(uint8_t *name) {
-
-    if (name[0] == 0xE5 || name[0] == 0x00 || name[0] == 0x20) {
-        return 0; 
-    }
-    
-    //check for other illegal characters
-    for (int i = 0; i < 11; i++) {
-        if (name[i] < 0x20 || name[i] == 0x22 || name[i] == 0x2A || name[i] == 0x2B || name[i] == 0x2C || 
-            name[i] == 0x2F || name[i] == 0x3A || name[i] == 0x3B || name[i] == 0x3C || name[i] == 0x3D || name[i] == 0x3E || 
-            name[i] == 0x3F || name[i] == 0x5B || name[i] == 0x5C || name[i] == 0x5D || name[i] == 0x7C) {
-            return 0;
-        }
-    }
     return 1;
 }
+
 uint32_t convert_clus_num_to_offset_in_fat_region(uint32_t clus_num) {
     uint32_t fat_region_offset = 0x4000;
     return fat_region_offset + clus_num * 4;
@@ -377,6 +365,7 @@ uint32_t getNextCluster(uint32_t currentCluster) {
 
 void loadDirectoryEntries(uint32_t clusterNumber) {
     int fat32_fd = image->fd;
+    uint32_t clusterSize = image->sectpClus * image->BpSect;
     printf("Printing computed cluster number: %d\n", clusterNumber);
 
     //reset global list of entries
@@ -387,16 +376,18 @@ void loadDirectoryEntries(uint32_t clusterNumber) {
     numDirectoryEntries = 0;
 
     //read directory entries from the current cluster and its subsequent clusters
-    while (clusterNumber >= 2 && clusterNumber <= 0x0FFFFFFF) {
-        uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * image->sectpClus * image->BpSect;
+    while (clusterNumber >= 2) {
+        uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize;
         printf("Printing offset: %02x\n", offset);
-
+	uint32_t end_offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize + clusterSize;
         //read directory entries from the current cluster
         while (1) {
-            directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
-            if (entry == NULL || entry->DIR_Name[0] == 0x00) {
-                break;
+            //reached the end of a cluster
+            printf("printing offset: %d, printing cluster size : %d", offset, end_offset);
+            if (offset + sizeof(directoryEntry) > end_offset){
+            	break;
             }
+            directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
             if (entry->DIR_Attr == 0x0F) { // Skip long file entries
                 offset += sizeof(directoryEntry);
                 continue;
@@ -447,6 +438,9 @@ void listDirectoryEntries(const char *path) {
 	char name[11];
 	memcpy(name, directoryEntries[i].DIR_Name, 11);
 	name[11] = '\0'; 
+	if (name[0] == 0x00 || name[0] == 0x20){
+		continue;
+	}
 	printf("%s\n", name);
     }
     
