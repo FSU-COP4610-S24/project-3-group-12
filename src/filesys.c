@@ -25,7 +25,6 @@ bool changeDirectory(const char *dirname);
 uint32_t getClusterNumber(char *path);
 uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name);
 
-
 struct imageStruct {
     int fd;
     uint16_t BpSect;
@@ -55,9 +54,12 @@ struct imageStruct *image;
 struct directoryEntry *directoryEntries = NULL;
 int numDirectoryEntries = 0;
 
-//used to manage what directory we are in
+//used to manage what directory we are in and path information
 char* currentDirectory;
 int currentClusterNumber = 2;
+uint32_t *clusterPath = NULL;
+int pathIndex = -1;
+int pathSize = 0;
 
 int main(int argc, char *argv[]) {
     char command[100];
@@ -127,29 +129,65 @@ bool compareDirectoryEntryName(const char *dirName, const char *inputName) {
 }
 
 bool changeDirectory(const char *dirname) {
+    // handle case where we change to parent directory
+    if (strcmp(dirname, "..") == 0) {
+        if (pathIndex >= 0) {
+            currentClusterNumber = clusterPath[pathIndex];
+            pathIndex--;
+            // update currentDirectory to remove the last directory name
+            char *lastSlash = strrchr(currentDirectory, '/');
+            if (lastSlash != NULL) {
+                *lastSlash = '\0';
+            } else {
+                // if no slash is found, reset currentDirectory
+                free(currentDirectory);
+                currentDirectory = NULL;
+            }
+            return true;
+        } else {
+            return false;
+        }
+    }
+
+    // store current cluster number in array and reallocate memory if necessary
+    if (pathIndex >= pathSize - 1) {
+        // reallocate memory for the path size
+        int newSize = pathSize == 0 ? 1 : 2 * pathSize; // Double the size
+        uint32_t *temp = realloc(clusterPath, newSize * sizeof(uint32_t));
+        if (temp == NULL) {
+            printf("Memory allocation error.\n");
+            return false;
+        }
+        clusterPath = temp;
+        pathSize = newSize;
+    }
+    // store current cluster number
+    pathIndex++;
+    clusterPath[pathIndex] = currentClusterNumber;
+
     uint32_t newCluster = getClusterNumber(dirname);
     if (newCluster == 0) {
         return false;
     }
 
-    //update global cluster var
+    // update global cluster var
     currentClusterNumber = newCluster;
     uint32_t parentCluster = currentClusterNumber;
 
     char *newPath = NULL;
     if (currentDirectory != NULL) {
-        //allocate memory for the new path with / appended to currentDirectory
+        // allocate memory for the new path with '/' appended to currentDirectory
         newPath = malloc(strlen(currentDirectory) + strlen(dirname) + 2);
         if (newPath == NULL) {
             printf("Memory allocation error\n");
             return false;
         }
-        //construct the new path with / appended to currentDirectory
+        // construct the new path with '/' appended to currentDirectory
         strcpy(newPath, currentDirectory);
         strcat(newPath, "/");
         strcat(newPath, dirname);
     } else {
-        //allocate memory for just the dirname
+        // allocate memory for just the dirname
         newPath = malloc(strlen(dirname) + 1);
         if (newPath == NULL) {
             printf("Memory allocation error\n");
@@ -158,7 +196,7 @@ bool changeDirectory(const char *dirname) {
         strcpy(newPath, dirname);
     }
 
-    //update global currentDirectory var
+    // update global currentDirectory var
     free(currentDirectory);
     currentDirectory = newPath;
 
@@ -224,13 +262,13 @@ directoryEntry* encode_dir_entry(int fat32_fd, uint32_t offset) {
 
 int is_valid_name(uint8_t *name) {
 
-    if (name[0] == 0xE5) {
+    if (name[0] == 0xE5 || name[0] == 0x00 || name[0] == 0x20) {
         return 0; 
     }
     
     //check for other illegal characters
     for (int i = 0; i < 11; i++) {
-        if (name[i] < 0x20 || name[i] == 0x22 || name[i] == 0x2A || name[i] == 0x2B || name[i] == 0x2C || name[i] == 0x2E || 
+        if (name[i] < 0x20 || name[i] == 0x22 || name[i] == 0x2A || name[i] == 0x2B || name[i] == 0x2C || 
             name[i] == 0x2F || name[i] == 0x3A || name[i] == 0x3B || name[i] == 0x3C || name[i] == 0x3D || name[i] == 0x3E || 
             name[i] == 0x3F || name[i] == 0x5B || name[i] == 0x5C || name[i] == 0x5D || name[i] == 0x7C) {
             return 0;
@@ -238,12 +276,37 @@ int is_valid_name(uint8_t *name) {
     }
     return 1;
 }
+uint32_t convert_clus_num_to_offset_in_fat_region(uint32_t clus_num) {
+    uint32_t fat_region_offset = 0x4000;
+    return fat_region_offset + clus_num * 4;
+}
+
+uint32_t getNextCluster(uint32_t currentCluster) {
+    uint32_t fat32_fd = image->fd;
+    uint32_t max_clus_num = (image->secpFAT * image->BpSect) / image->sectpClus;
+    uint32_t offset = convert_clus_num_to_offset_in_fat_region(currentCluster);
+    uint32_t next_clus_num = 0;
+
+    if (currentCluster >= 2 && currentCluster <= max_clus_num) {
+        offset = convert_clus_num_to_offset_in_fat_region(currentCluster);
+        ssize_t bytesRead = pread(fat32_fd, &next_clus_num, sizeof(uint32_t), offset);
+        if (bytesRead == -1) {
+            perror("Error reading FAT entry");
+            return 0;
+        }
+        next_clus_num &= 0x0FFFFFFF;
+        //check for the end of the chain
+	if (next_clus_num >= 0x0FFFFFF8 && next_clus_num <= 0x0FFFFFFF) {
+	    return 0; 
+	}
+        currentCluster = next_clus_num;
+    }
+    return next_clus_num;
+}
 
 void loadDirectoryEntries(uint32_t clusterNumber) {
     int fat32_fd = image->fd;
     printf("Printing computed cluster number: %d\n", clusterNumber);
-    uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * image->sectpClus * image->BpSect;
-    printf("Printing offset: %02x\n", offset);
 
     //reset global list of entries
     if (directoryEntries != NULL) {
@@ -252,36 +315,49 @@ void loadDirectoryEntries(uint32_t clusterNumber) {
     }
     numDirectoryEntries = 0;
 
-    //read directory entries from the current cluster
-    while (1) {
-        directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
-        if (entry == NULL || entry->DIR_Name[0] == 0x00) {
-            break; //end of directory entries
-        }
+    //read directory entries from the current cluster and its subsequent clusters
+    while (clusterNumber >= 2 && clusterNumber <= 0x0FFFFFFF) {
+        uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * image->sectpClus * image->BpSect;
+        printf("Printing offset: %02x\n", offset);
 
-        //check if the entry is a valid file or directory name
-        if (is_valid_name(entry->DIR_Name)) {
-            //allocate memory for directoryEntries if it's NULL
-            if (directoryEntries == NULL) {
-                directoryEntries = malloc(sizeof(directoryEntry));
-                if (directoryEntries == NULL) {
-                    perror("Error allocating memory for directory entries");
-                    return;
-                }
-            } else {
-                //reallocate memory for directoryEntries
-                directoryEntry *temp = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(directoryEntry));
-                if (temp == NULL) {
-                    perror("Error reallocating memory for directory entries");
-                    return;
-                }
-                directoryEntries = temp;
+        //read directory entries from the current cluster
+        while (1) {
+            directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
+            if (entry == NULL || entry->DIR_Name[0] == 0x00) {
+                break;
             }
+            if (entry->DIR_Attr == 0x0F) { // Skip long file entries
+                offset += sizeof(directoryEntry);
+                continue;
+            }
+            //check if the entry is a valid file name
+            if (is_valid_name(entry->DIR_Name)) {
+                if (directoryEntries == NULL) {
+                    directoryEntries = malloc(sizeof(directoryEntry));
+                    if (directoryEntries == NULL) {
+                        perror("Error allocating memory for directory entries");
+                        return;
+                    }
+                } else {
+                    //reallocate memory for directoryEntries
+                    directoryEntry *temp = realloc(directoryEntries, (numDirectoryEntries + 1) * sizeof(directoryEntry));
+                    if (temp == NULL) {
+                        perror("Error reallocating memory for directory entries");
+                        return;
+                    }
+                    directoryEntries = temp;
+                }
 
-            //copy the entry to directoryEntries
-            directoryEntries[numDirectoryEntries++] = *entry;
+                //copy the entry to directoryEntries
+                directoryEntries[numDirectoryEntries++] = *entry;
+            }
+            offset += sizeof(directoryEntry);
         }
-        offset += sizeof(directoryEntry);
+
+        printf("Before getting next cluster\n");
+        //get next cluster in the chain
+        clusterNumber = getNextCluster(clusterNumber);
+        printf("After getting next cluster: %d\n", clusterNumber);
     }
 }
 
