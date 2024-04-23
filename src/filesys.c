@@ -266,6 +266,10 @@ bool makeDirectory(const char *dirname) {
             dentry->DIR_FstClusHI = (newCluster >> 16) & 0xFFF;
             dentry->DIR_FstClusLO = newCluster & 0xFFFF;
             dentry->DIR_FileSize = 0;
+
+	    uint32_t offset = convert_cluster_to_offset(currentClusterNumber) + (i * sizeof(
+		directoryEntry));
+            ssize_t bytesWritten = pwrite(image->fd, dentry, sizeof(directoryEntry), offset);
 	    return true;
 	}
     }
