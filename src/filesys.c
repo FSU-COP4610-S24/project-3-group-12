@@ -21,6 +21,8 @@ void add_token(tokenlist *tokens, char *item);
 tokenlist *get_tokens(char *input);
 void free_tokens(tokenlist *tokens);
 void setFATEntry(uint32_t clusterNumber, uint32_t value);
+void open_file_for_read(const char* filename);
+void read_data_from_file(const char* filename, int size);
 char* getDirectoryNameByCluster(uint32_t parentCluster, uint32_t targetCluster);
 bool changeDirectory(const char *dirname);
 bool makeDirectory(const char *dirname);
@@ -28,6 +30,8 @@ uint32_t getClusterNumber(char *path);
 uint32_t getFATEntry(uint32_t clusterNumber);
 uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name);
 uint32_t allocateNewCluster();
+uint32_t convert_cluster_to_offset(uint32_t cluster);
+
 
 struct imageStruct {
     int fd;
@@ -54,9 +58,22 @@ typedef struct __attribute__((packed)) directoryEntry {
     uint32_t DIR_FileSize;
 } directoryEntry;
 
+typedef struct {
+    char name[11];
+    int is_open;
+    uint32_t start_cluster;
+    uint32_t size;
+    uint32_t offset;
+    uint8_t access_mode;
+} open_file;
+
 struct imageStruct *image;
 struct directoryEntry *directoryEntries = NULL;
+open_file *opened_files = NULL;
+int numOpenedFiles = 0;
 int numDirectoryEntries = 0;
+
+directoryEntry* find_file_in_directory(const char* filename);
 
 //used to manage what directory we are in and path information
 char* currentDirectory;
@@ -116,7 +133,19 @@ int main(int argc, char *argv[]) {
 		makeDirectory(tokens->items[1]);
 	    }
 	}
-	    
+	if (strcmp(tokens->items[0], "open") == 0) {
+	    if (tokens->size >= 2) {
+		char *filename = tokens->items[1];
+		open_file_for_read(filename);
+	    }
+	}
+	if (strcmp(tokens->items[0], "read") == 0) {
+	    if (tokens->size >= 3) {
+		char *filename = tokens->items[1];
+		int size = atoi(tokens->items[2]);
+		read_data_from_file(filename, size);
+	    }
+	}
         free(input);
         free_tokens(tokens);
     }
@@ -310,6 +339,12 @@ uint32_t allocateNewCluster() {
     return 0;
 }
 
+uint32_t convert_cluster_to_offset(uint32_t cluster) {
+    uint32_t cluster_size = image->sectpClus * image->BpSect;
+    uint32_t offset = image->dataStartOffset + (cluster - 2) * cluster_size;
+    return offset;
+}
+
 void setFATEntry(uint32_t clusterNumber, uint32_t value) {
     uint32_t offset = image->rsvSecCnt * image->BpSect + clusterNumber * 4;
 
@@ -446,6 +481,85 @@ void listDirectoryEntries(const char *path) {
     
 }
 
+void open_file_for_read(const char* filename) {
+    directoryEntry* file_entry = find_file_in_directory(filename);
+
+    if (file_entry == NULL) {
+	printf("Error: File '%s' not found.\n", filename);
+	return;
+    }
+
+    for (int i = 0; i < numOpenedFiles; ++i) {
+	if (strcmp(opened_files[i].name, filename) == 0 && opened_files[i].is_open) {
+	    printf("Error: File '%s' is already open.\n", filename);
+	    return;
+	}
+    }
+
+    open_file new_file;
+    strncpy(new_file.name, filename, 11);
+    new_file.is_open = 1;
+    new_file.start_cluster = (file_entry->DIR_FstClusHI << 16) | file_entry->DIR_FstClusLO;
+    new_file.size = file_entry->DIR_FileSize;
+    new_file.offset = 0;
+    new_file.access_mode = 0x01;
+
+    opened_files = realloc(opened_files, (numOpenedFiles + 1) * sizeof(open_file));
+    opened_files[numOpenedFiles] = new_file;
+    numOpenedFiles++;
+}
+
+void read_data_from_file(const char *filename, int size) {
+    open_file* file = NULL;
+
+    for (int i = 0; i < numOpenedFiles; ++i) {
+	if (strcmp(opened_files[i].name, filename) == 0 && opened_files[i].is_open) {
+	    file = &opened_files[i];
+	    break;
+	}
+    }
+
+    if (file == NULL) {
+	printf("Error: File '%s' is not open for reading.\n", filename);
+	return;
+    }
+
+    if (file->access_mode != 0x01) {
+	printf("Error: File '%s' is not opened for reading.\n", filename);
+	return;
+    }
+
+    if (file->offset >= file->size) {
+	printf("Error: Reached end of file.\n");
+	return;
+    }
+
+    if (file->offset + size > file->size) {
+	size = file->size - file->offset;
+    }
+
+    uint32_t cluster = file->start_cluster + (file->offset / (image->sectpClus * image->BpSect));
+    uint32_t offset = convert_cluster_to_offset(cluster) + (file->offset % (image->sectpClus * 
+			    image->BpSect));
+    char* buffer = malloc(size);
+    ssize_t bytes_read = pread(image->fd, buffer, size, offset);
+
+    if (bytes_read != size) {
+	printf("Error: Could not read bytes.\n");
+	free(buffer);
+	return;
+    }
+
+    printf("Data read from file '%s':\n", filename);
+    for (int i = 0; i < size; ++i) {
+	printf("%c", buffer[i]);
+    }
+    printf("\n");
+
+    free(buffer);
+    file->offset += bytes_read;
+}
+
 //assumes file descriptor is set
 void initImage() {
     char buf0[2];
@@ -524,6 +638,15 @@ char *get_input(void) {
     buffer = (char *)realloc(buffer, bufsize + 1);
     buffer[bufsize] = 0;
     return buffer;
+}
+
+directoryEntry* find_file_in_directory(const char* filename) {
+    for (int i = 0; i < numDirectoryEntries; ++i) {
+	if (compareDirectoryEntryName(directoryEntries[i].DIR_Name, filename)) {
+	    return &directoryEntries[i];
+	}
+    }
+    return NULL;
 }
 
 tokenlist *new_tokenlist(void) {
