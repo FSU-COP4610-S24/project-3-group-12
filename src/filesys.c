@@ -26,6 +26,7 @@ void read_data_from_file(const char* filename, int size);
 char* getDirectoryNameByCluster(uint32_t parentCluster, uint32_t targetCluster);
 bool changeDirectory(const char *dirname);
 bool makeDirectory(const char *dirname);
+bool createFile(const char *filename);
 uint32_t getClusterNumber(char *path);
 uint32_t getFATEntry(uint32_t clusterNumber);
 uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name);
@@ -131,6 +132,11 @@ int main(int argc, char *argv[]) {
 	if (strcmp(tokens->items[0], "mkdir") == 0) {
 	    if (tokens->size >= 2) {
 		makeDirectory(tokens->items[1]);
+	    }
+	}
+	if (strcmp(tokens->items[0], "creat") == 0) {
+	    if (tokens->size >= 2) {
+		createFile(tokens->items[1]);
 	    }
 	}
 	if (strcmp(tokens->items[0], "open") == 0) {
@@ -241,42 +247,6 @@ bool changeDirectory(const char *dirname) {
     return true;
 }
 
-bool makeDirectory(const char *dirname) {
-    for (int i = 0; i < numDirectoryEntries; i++) {
-	struct directoryEntry *dentry = &directoryEntries[i];
-
-	if (strncmp(dentry->DIR_Name, dirname, 11) == 0) {
-	    printf("Error: Directory already exists.\n");
-	    return false;
-	}
-    }
-
-    uint32_t newCluster = allocateNewCluster();
-    if (newCluster == 0) {
-	printf("Error: No free clusters.\n");
-        return false;
-    }
-
-    for (int i = 0; i < numDirectoryEntries; i++) {
-        struct directoryEntry *dentry = &directoryEntries[i];
-	if (dentry->DIR_Name[0] == 0x00 || dentry->DIR_Name[0] == 0xE5) {
-		
-            strncpy(dentry->DIR_Name, dirname, 11);
-            dentry->DIR_Attr = ATTR_DIRECTORY;
-            dentry->DIR_FstClusHI = (newCluster >> 16) & 0xFFF;
-            dentry->DIR_FstClusLO = newCluster & 0xFFFF;
-            dentry->DIR_FileSize = 0;
-
-	    uint32_t offset = convert_cluster_to_offset(currentClusterNumber) + (i * sizeof(
-		directoryEntry));
-            ssize_t bytesWritten = pwrite(image->fd, dentry, sizeof(directoryEntry), offset);
-	    return true;
-	}
-    }
-    
-    printf("Error: No free directory entries.\n");
-    return false;
-}
 
 uint32_t getClusterNumber(char *path){
 	char *path_copy = strdup(path);
@@ -417,17 +387,15 @@ void loadDirectoryEntries(uint32_t clusterNumber) {
     //read directory entries from the current cluster and its subsequent clusters
     while (clusterNumber >= 2) {
         uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize;
-        printf("Printing offset: %02x\n", offset);
 	uint32_t end_offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize + clusterSize;
         //read directory entries from the current cluster
         while (1) {
             //reached the end of a cluster
-            printf("printing offset: %d, printing cluster size : %d", offset, end_offset);
             if (offset + sizeof(directoryEntry) > end_offset){
             	break;
             }
             directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
-            if (entry->DIR_Attr == 0x0F) { // Skip long file entries
+            if (entry->DIR_Attr == 0x0F) { //skip long file entries
                 offset += sizeof(directoryEntry);
                 continue;
             }
@@ -455,10 +423,8 @@ void loadDirectoryEntries(uint32_t clusterNumber) {
             offset += sizeof(directoryEntry);
         }
 
-        printf("Before getting next cluster\n");
         //get next cluster in the chain
         clusterNumber = getNextCluster(clusterNumber);
-        printf("After getting next cluster: %d\n", clusterNumber);
     }
 }
 
@@ -563,6 +529,145 @@ void read_data_from_file(const char *filename, int size) {
     free(buffer);
     file->offset += bytes_read;
 }
+bool makeDirectory(const char *dirname) {
+    int fat32_fd = image->fd;
+    uint32_t clusterSize = image->sectpClus * image->BpSect;
+
+    // Check if the directory already exists
+    for (int i = 0; i < numDirectoryEntries; i++) {
+        struct directoryEntry *dentry = &directoryEntries[i];
+        if (compareDirectoryEntryName(dentry->DIR_Name, dirname) == 1) {
+            printf("Error: Directory already exists.\n");
+            return false;
+        }
+    }
+
+    // Iterate through the cluster chain to find space for the new directory entry
+    uint32_t clusterNumber = currentClusterNumber;
+    while (clusterNumber >= 2) {
+        uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize;
+        uint32_t end_offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize + clusterSize;
+
+        // Check if there is space in the current cluster
+        while (offset + sizeof(directoryEntry) <= end_offset) {
+            directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
+            if (entry->DIR_Name[0] == 0x00 || entry->DIR_Name[0] == 0xE5) {
+                strncpy(entry->DIR_Name, dirname, 11);
+                entry->DIR_Attr = ATTR_DIRECTORY;
+                entry->DIR_FstClusHI = (clusterNumber >> 16) & 0xFFF;
+                entry->DIR_FstClusLO = clusterNumber & 0xFFFF;
+                entry->DIR_FileSize = 0;
+
+                ssize_t bytesWritten = pwrite(image->fd, entry, sizeof(directoryEntry), offset);
+                return true;
+            }
+            offset += sizeof(directoryEntry);
+        }
+
+        //get next cluster in the chain
+        clusterNumber = getNextCluster(clusterNumber);
+    }
+
+    //if no space found, allocate a new cluster
+    uint32_t newCluster = allocateNewCluster();
+    if (newCluster == 0) {
+        printf("Error: No free clusters.\n");
+        return false;
+    }
+
+    loadDirectoryEntries(newCluster);
+
+    //find an available entry in the new cluster and create the directory
+    for (int i = 0; i < numDirectoryEntries; i++) {
+        struct directoryEntry *dentry = &directoryEntries[i];
+        if (dentry->DIR_Name[0] == 0x00 || dentry->DIR_Name[0] == 0xE5) {
+            strncpy(dentry->DIR_Name, dirname, 11);
+            dentry->DIR_Attr = ATTR_DIRECTORY;
+            dentry->DIR_FstClusHI = (newCluster >> 16) & 0xFFF;
+            dentry->DIR_FstClusLO = newCluster & 0xFFFF;
+            dentry->DIR_FileSize = 0;
+
+            uint32_t offset = convert_cluster_to_offset(newCluster) + (i * sizeof(directoryEntry));
+            ssize_t bytesWritten = pwrite(image->fd, dentry, sizeof(directoryEntry), offset);
+            return true;
+        }
+    }
+
+    printf("Error: No free directory entries.\n");
+    return false;
+}
+
+bool createFile(const char *filename) {
+    int fat32_fd = image->fd;
+    uint32_t clusterSize = image->sectpClus * image->BpSect;
+    
+    for (int i = 0; i < numDirectoryEntries; i++) {
+        struct directoryEntry *dentry = &directoryEntries[i];
+
+        if (compareDirectoryEntryName(dentry->DIR_Name, filename) == 1) {
+            printf("Error: File already exists.\n");
+            return false;
+        }
+    }
+    
+    //iterate through the cluster chain to find available entries
+    uint32_t clusterNumber = currentClusterNumber;
+    while (clusterNumber >= 2) {
+        uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize;
+        uint32_t end_offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize + clusterSize;
+
+        //check if there is space in the current cluster
+        while (offset + sizeof(directoryEntry) <= end_offset) {
+            directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
+
+            if (entry->DIR_Name[0] == 0x00 || entry->DIR_Name[0] == 0xE5) {
+                strncpy(entry->DIR_Name, filename, 11);
+                entry->DIR_Attr = ATTR_ARCHIVE;
+                entry->DIR_FstClusHI = (clusterNumber >> 16) & 0xFFF;
+                entry->DIR_FstClusLO = clusterNumber & 0xFFFF;
+                entry->DIR_FileSize = 0;
+
+                ssize_t bytesWritten = pwrite(image->fd, entry, sizeof(directoryEntry), offset);
+                return true;
+            }
+            offset += sizeof(directoryEntry);
+        }
+
+        //get next cluster in the chain
+        clusterNumber = getNextCluster(clusterNumber);
+    }
+	
+    //if no available space, allocate a new cluster and add the entry
+    uint32_t newCluster = allocateNewCluster();
+
+    if (newCluster == 0) {
+        printf("Error: No free clusters.\n");
+        return false;
+    }
+
+    loadDirectoryEntries(newCluster);
+
+    for (int i = 0; i < numDirectoryEntries; i++) {
+        struct directoryEntry *dentry = &directoryEntries[i];
+
+        if (dentry->DIR_Name[0] == 0x00 || dentry->DIR_Name[0] == 0xE5) {
+            strncpy(dentry->DIR_Name, filename, 11);
+            dentry->DIR_Attr = ATTR_ARCHIVE;
+            dentry->DIR_FstClusHI = (newCluster >> 16) & 0xFFF;
+            dentry->DIR_FstClusLO = newCluster & 0xFFFF;
+            dentry->DIR_FileSize = 0;
+
+            uint32_t offset = convert_cluster_to_offset(newCluster) + (i * sizeof(directoryEntry));
+            ssize_t bytesWritten = pwrite(image->fd, dentry, sizeof(directoryEntry), offset);
+
+            return true;
+        }
+    }
+
+    printf("Error: No free directory entries.\n");
+    return false;
+}
+
 
 //assumes file descriptor is set
 void initImage() {
