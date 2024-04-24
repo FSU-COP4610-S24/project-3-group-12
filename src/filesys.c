@@ -599,7 +599,7 @@ void write_data_to_file(const char *filename, const char *data) {
 	return;
     }
 
-    if (file->access_mode != 0x02) {
+    if (file->access_mode == 0x01) {
 	printf("Error: File '%s' is not write accessible.\n", filename);
 	return;
     }
