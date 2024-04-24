@@ -114,6 +114,9 @@ int main(int argc, char *argv[]) {
         tokenlist *tokens = get_tokens(input);
 
         if (strcmp(tokens->items[0], "exit") == 0) {
+            free(input);
+	    free(tokens);
+	    sprintf(command, "sudo umount ./mnt");
             break;
         }
         if (strcmp(tokens->items[0], "info") == 0) {
