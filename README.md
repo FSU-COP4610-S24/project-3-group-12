@@ -30,7 +30,7 @@ Group 12
 - **Contributed**: 
 
 ### Part 3d: Delete
-- **Contributed**: 
+- **Contributed**: Ryan Baker
 
   
 
@@ -55,8 +55,9 @@ In the root directory, run:
 make
 ```
 ### Run Program
+In the root directory, run:
 ```
-./filesys fat32.img
+./bin/filesys fat32.img
 ```
 
 
