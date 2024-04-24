@@ -117,6 +117,7 @@ int main(int argc, char *argv[]) {
             free(input);
 	    free(tokens);
 	    sprintf(command, "sudo umount ./mnt");
+	    system(command);
             break;
         }
         if (strcmp(tokens->items[0], "info") == 0) {
