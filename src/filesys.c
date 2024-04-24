@@ -23,6 +23,7 @@ void free_tokens(tokenlist *tokens);
 void setFATEntry(uint32_t clusterNumber, uint32_t value);
 void open_file_for_read(const char* filename);
 void read_data_from_file(const char* filename, int size);
+void write_data_to_file(const char* filename, const char* data);
 char* getDirectoryNameByCluster(uint32_t parentCluster, uint32_t targetCluster);
 bool changeDirectory(const char *dirname);
 bool makeDirectory(const char *dirname);
@@ -164,6 +165,13 @@ int main(int argc, char *argv[]) {
 		read_data_from_file(filename, size);
 	    }
 	}
+	if (strcmp(tokens->items[0], "write") == 0) {
+            if (tokens->size >= 3) {
+                char *filename = tokens->items[1];
+                char *data = tokens->items[2];
+                write_data_to_file(filename, data);
+            }
+        }
 	if (strcmp(tokens->items[0], "rm") == 0) {
 	    if (tokens->size >= 2) {
 		char *filename = tokens->items[1];
@@ -575,6 +583,71 @@ void read_data_from_file(const char *filename, int size) {
 
     free(buffer);
     file->offset += bytes_read;
+}
+
+void write_data_to_file(const char *filename, const char *data) {
+    open_file *file = NULL;
+    for (int i = 0; i < numOpenedFiles; i++) {
+	if (strcmp(opened_files[i].name, filename) == 0 && opened_files[i].is_open) {
+	    file = &opened_files[i];
+	    break;
+	}
+    }
+
+    if (file == NULL) {
+	printf("Error: File '%s' not found or not opened.\n", filename);
+	return;
+    }
+
+    if (file->access_mode != 0x02) {
+	printf("Error: File '%s' is not write accessible.\n", filename);
+	return;
+    }
+
+    int dataLength = strlen(data);
+    int remainingBytes = dataLength;
+    int dataOffset = file->offset;
+    int clusterSize = image->sectpClus * image->BpSect;
+
+    uint32_t cluster = file->start_cluster + (dataOffset / clusterSize);
+    uint32_t clusterOffset = convert_cluster_to_offset(cluster) + (dataOffset % clusterSize);
+
+    while (remainingBytes > 0) {
+	int spaceInCluster = clusterSize - (clusterOffset % clusterSize);
+	int bytesToWrite = (remainingBytes < spaceInCluster) ? remainingBytes : spaceInCluster;
+
+	ssize_t bytesWritten = pwrite(image->fd, data, bytesToWrite, clusterOffset);
+
+	if (bytesWritten != bytesToWrite) {
+	    printf("Error: Failed to write to file '%s'.\n", filename);
+	    return;
+	}
+
+	remainingBytes -= bytesWritten;
+	data += bytesWritten;
+	clusterOffset += bytesWritten;
+
+	if (clusterOffset % clusterSize == 0) {
+	    uint32_t nextCluster = getNextCluster(cluster);
+   	    
+	    if (nextCluster == 0) {
+		nextCluster = allocateNewCluster();
+		if (nextCluster == 0) {
+		    printf("Error: No more free clusters.\n");
+    		    return;
+		}
+	    
+	        setFATEntry(cluster, nextCluster);
+	    }
+	
+
+	    cluster = nextCluster;
+	    clusterOffset = convert_cluster_to_offset(cluster);
+        }
+    }
+
+    file->offset += dataLength;
+    printf("Data written to '%s'.\n", filename);
 }
 
 uint32_t compute_dentry_offset(uint32_t clusterNumber, const char* filename) {
