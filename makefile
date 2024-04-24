@@ -1,12 +1,13 @@
 SRC := src
 OBJ := obj
+BIN := bin
 EXECUTABLE:= filesys
 
 SRCS := $(wildcard $(SRC)/*.c)
 OBJS := $(patsubst $(SRC)/%.c,$(OBJ)/%.o,$(SRCS))
 INCS := -Iinclude/
-DIRS := $(OBJ)/ mnt/
-EXEC := ./$(EXECUTABLE)
+DIRS := $(OBJ)/ mnt/ $(BIN)/
+EXEC := $(BIN)/$(EXECUTABLE)
 
 CC := gcc
 CFLAGS := -g -w -std=c99 $(INCS)
