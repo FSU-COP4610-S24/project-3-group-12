@@ -21,13 +21,13 @@ Group 12
 - **Contributed**: Ryan Baker
 
 ### Part 3: Create Directories and Files
-- **Contributed**: Alexander Kadja, Ryan Baker
+- **Contributed**: Alexander Kajda, Ryan Baker
 
 ### Part 4: Read Files
-- **Contributed**: Alexander Kadja
+- **Contributed**: Alexander Kajda
 
 ### Part 3c: Update
-- **Contributed**: 
+- **Contributed**: Alexander Kajda
 
 ### Part 3d: Delete
 - **Contributed**: Ryan Baker
