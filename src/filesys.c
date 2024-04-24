@@ -35,7 +35,9 @@ uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name);
 uint32_t allocateNewCluster();
 uint32_t convert_cluster_to_offset(uint32_t cluster);
 uint32_t compute_dentry_offset(uint32_t clusterNumber, const char* filename);
-
+bool is_directory_empty(uint32_t directoryCluster);
+void remove_directory_entry(uint32_t directoryCluster, char *path);
+bool remove_empty_directory(uint32_t directoryCluster, char *path);
 
 struct imageStruct {
     int fd;
@@ -176,6 +178,12 @@ int main(int argc, char *argv[]) {
 	    if (tokens->size >= 2) {
 		char *filename = tokens->items[1];
 		removeFile(filename);
+	    }
+	}
+	if (strcmp(tokens->items[0], "rmdir") == 0) {
+            if (tokens->size >= 2) {
+                char *target = tokens->items[1];
+		remove_empty_directory(currentClusterNumber, target);
 	    }
 	}
         free(input);
@@ -509,7 +517,7 @@ void listDirectoryEntries(const char *path) {
 	char name[11];
 	memcpy(name, directoryEntries[i].DIR_Name, 11);
 	name[11] = '\0'; 
-	if (name[0] == 0x00 || name[0] == 0x20 || name[0] == 0xE5){
+	if ((name[0] == 0x00 || name[0] == 0x20) || name[0] == 0xE5){
 		continue;
 	}
 	printf("%s\n", name);
@@ -965,6 +973,51 @@ directoryEntry* find_file_in_directory(const char* filename) {
 	}
     }
     return NULL;
+}
+
+bool is_directory_empty(uint32_t directoryCluster) {
+    uint32_t offset = convert_cluster_to_offset(directoryCluster);
+    directoryEntry entry;
+    int entriesToCheck = image->BpSect * image->sectpClus / sizeof(directoryEntry);  // Calculate number of entries per cluster
+
+    lseek(image->fd, offset, SEEK_SET);
+    // We need to loop through the directory entries in the cluster
+    for (int i = 0; i < entriesToCheck; i++) {
+        // Read the next directory entry
+        if(pread(image->fd, &entry, sizeof(directoryEntry), offset + i * sizeof(directoryEntry)) != sizeof(directoryEntry)) {
+            printf("Failed to read directory entry\n");
+            return false;
+	}
+        printf("Current directory entry being checked: %.11s\n", entry.DIR_Name);
+        // Check if the entry is empty
+        if (entry.DIR_Name[0] == 0x00) {
+            return true;
+        } else if (entry.DIR_Name[0] == 0xE5) {
+            printf("Entry marked deleted\n");
+            continue;
+	} else if ( i<2 && (entry.DIR_Name[0] == '.')) {
+            printf("Entry marked . or ..\n");
+	    continue;
+	}
+	return false;
+    }
+
+    return true;
+}
+
+bool remove_empty_directory(uint32_t directoryCluster, char *path) {
+    uint32_t targetCluster = findClusterInDirectory(directoryCluster, path);
+    if(targetCluster == 0) {
+        printf("Error locating directory\n");
+	return false;
+    }
+    if(is_directory_empty(targetCluster)) {
+        removeFile(path);
+    } else {
+        printf("Directory is not empty\n");
+	return false;
+    }
+    return true;
 }
 
 tokenlist *new_tokenlist(void) {
