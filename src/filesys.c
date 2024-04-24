@@ -33,6 +33,7 @@ uint32_t getFATEntry(uint32_t clusterNumber);
 uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name);
 uint32_t allocateNewCluster();
 uint32_t convert_cluster_to_offset(uint32_t cluster);
+uint32_t compute_dentry_offset(uint32_t clusterNumber, const char* filename);
 
 
 struct imageStruct {
@@ -455,7 +456,7 @@ void listDirectoryEntries(const char *path) {
 	char name[11];
 	memcpy(name, directoryEntries[i].DIR_Name, 11);
 	name[11] = '\0'; 
-	if (name[0] == 0x00 || name[0] == 0x20){
+	if (name[0] == 0x00 || name[0] == 0x20 || name[0] == 0xE5){
 		continue;
 	}
 	printf("%s\n", name);
@@ -572,6 +573,23 @@ void read_data_from_file(const char *filename, int size) {
     file->offset += bytes_read;
 }
 
+uint32_t compute_dentry_offset(uint32_t clusterNumber, const char* filename) {
+        int fat32_fd = image->fd;
+        uint32_t clusterSize = image->sectpClus * image->BpSect;
+        uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize;
+        uint32_t end_offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize + clusterSize;
+
+        while (offset + sizeof(directoryEntry) <= end_offset) {
+            directoryEntry *entry = encode_dir_entry(fat32_fd, offset);
+            if (compareDirectoryEntryName(entry->DIR_Name, filename)) {
+		return offset;
+            }
+            offset += sizeof(directoryEntry);
+        }
+        printf("offset not calc");
+        return 0;
+}
+
 bool removeFile(const char *filename) {
     //check if the file is open
     for (int i = 0; i < numOpenedFiles; ++i) {
@@ -580,40 +598,23 @@ bool removeFile(const char *filename) {
             return false;
         }
     }
-    
-    //load directory entries for the current directory
-    loadDirectoryEntries(currentClusterNumber);
-    
-    //find the directory entry corresponding to the file
-    directoryEntry* fileEntry = find_file_in_directory(filename);
-    
-    if (fileEntry == NULL) {
+    directoryEntry* dentry = find_file_in_directory(filename);
+    if (dentry == NULL) {
         printf("Error: File '%s' not found.\n", filename);
+        return;
+    }
+    
+    //get the offset of the entry and write the bytes
+    uint32_t offset = compute_dentry_offset(currentClusterNumber, filename);
+    dentry->DIR_Name[0] = 0x00;
+    ssize_t bytes_written = pwrite(image->fd, dentry, sizeof(directoryEntry), offset);
+    if (bytes_written != sizeof(directoryEntry)) {
+        printf("Error: Failed to write directory entry.\n");
         return false;
     }
-    
-    int index = 0;
-    for (int i = 0; i < numDirectoryEntries; ++i) {
-	if (compareDirectoryEntryName(directoryEntries[i].DIR_Name, filename)) {
-	    index = i;
-	}
-    }
-    
-    //get the cluster number of the file
-    uint32_t clusterNum = (fileEntry->DIR_FstClusHI << 16) | fileEntry->DIR_FstClusLO;
-    
-    //mark the directory entry as free
-    memset(fileEntry->DIR_Name, 0x00, 11); // Mark the directory entry as deleted
-    
-    uint32_t offset = convert_cluster_to_offset(clusterNum) + (index * sizeof(directoryEntry));
-    ssize_t bytesWritten = pwrite(image->fd, fileEntry, sizeof(directoryEntry), offset);
-    
-    if (bytesWritten != sizeof(directoryEntry)) {
-        printf("Error: Failed to correctly remove directory entry for '%s'.\n", filename);
-        return false;
-    }
-    
+
     return true;
+
 }
 bool makeDirectory(const char *dirname) {
     int fat32_fd = image->fd;
