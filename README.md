@@ -24,13 +24,13 @@ Group 12
 - **Contributed**: Alexander Kajda, Ryan Baker
 
 ### Part 4: Read Files
+- **Contributed**: Alexander Kajda, Ian O'Neill
+
+### Part 5: Update
 - **Contributed**: Alexander Kajda
 
-### Part 3c: Update
-- **Contributed**: Alexander Kajda
-
-### Part 3d: Delete
-- **Contributed**: Ryan Baker
+### Part 6: Delete
+- **Contributed**: Ryan Baker, Ian O'Neill
 
   
 
@@ -48,6 +48,7 @@ Group 12
 
 ### Requirements
 - **Compiler**: `gcc' 
+- **Image**: a FAT32 image file
 
 ### Compilation
 In the root directory, run:
@@ -59,6 +60,3 @@ In the root directory, run:
 ```
 ./bin/filesys fat32.img
 ```
-
-
-
