@@ -191,6 +191,15 @@ int main(int argc, char *argv[]) {
 	if (strcmp(tokens->items[0], "lsof") == 0) {
             print_open_files();
 	}
+	if (strcmp(tokens->items[0], "lseek") == 0) {
+            if (tokens->size >= 3) {
+                char *filename = tokens->items[1];
+                int offset = atoi(tokens->items[2]);
+                lseek_file(filename, offset);
+            } else {
+                printf("Error: lseek <file> <offset>\n");
+            }
+        }
         free(input);
         free_tokens(tokens);
     }
@@ -978,6 +987,31 @@ void print_open_files() {
     }
     for(int i = 0; i < numOpenedFiles; i++) {
         printf("Index: %d\nName: %s\nMode: " PRIu8 "\nOffset: " PRIu32 "\nPath: %s\n", i, opened_files[i].name, opened_files[i].access_mode, opened_files[i].offset, opened_files[i].path);
+    }
+}
+
+void set_lseek(char* filename, int new_offset) {
+    bool file = false;
+    bool offset_val = false;
+    if (strcmp(opened_files[i].name, filename) == 0) {
+            file = true;
+            if (opened_files[i].is_open) {
+                if (new_offset >= 0 && new_offset <= opened_files[i].size) {
+                    opened_files[i].offset = new_offset;
+                    offset_val = true;
+                    printf("Offset set to %d for file '%s'\n", new_offset, filename);
+                }
+                break;
+            } else {
+                printf("Error: File '%s' is not open.\n", filename);
+                return;
+            }
+        }
+    }
+    if (!file) {
+        printf("Error: File '%s' not open.\n", filename);
+    } else if (!offset_val) {
+        printf("Error: Offset %d is out of bounds for file '%s'.\n", new_offset, filename);
     }
 }
 

@@ -1,2 +1,4 @@
 fat32.img
 mnt/
+bin/
+obj/
