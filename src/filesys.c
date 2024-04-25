@@ -38,6 +38,7 @@ uint32_t compute_dentry_offset(uint32_t clusterNumber, const char* filename);
 bool is_directory_empty(uint32_t directoryCluster);
 void remove_directory_entry(uint32_t directoryCluster, char *path);
 bool remove_empty_directory(uint32_t directoryCluster, char *path);
+void print_open_files();
 
 struct imageStruct {
     int fd;
@@ -71,6 +72,7 @@ typedef struct {
     uint32_t size;
     uint32_t offset;
     uint8_t access_mode;
+    char path[64];
 } open_file;
 
 struct imageStruct *image;
@@ -186,6 +188,9 @@ int main(int argc, char *argv[]) {
 		remove_empty_directory(currentClusterNumber, target);
 	    }
 	}
+	if (strcmp(tokens->items[0], "lsof") == 0) {
+            print_open_files();
+	}
         free(input);
         free_tokens(tokens);
     }
@@ -267,61 +272,6 @@ bool changeDirectory(const char *dirname) {
 
     return true;
 }
-
-    // store current cluster number in array and reallocate memory if necessary
-    if (pathIndex >= pathSize - 1) {
-        // reallocate memory for the path size
-        int newSize = pathSize == 0 ? 1 : 2 * pathSize; // Double the size
-        uint32_t *temp = realloc(clusterPath, newSize * sizeof(uint32_t));
-        if (temp == NULL) {
-            printf("Memory allocation error.\n");
-            return false;
-        }
-        clusterPath = temp;
-        pathSize = newSize;
-    }
-    // store current cluster number
-    pathIndex++;
-    clusterPath[pathIndex] = currentClusterNumber;
-
-    uint32_t newCluster = getClusterNumber(dirname);
-    if (newCluster == 0) {
-        return false;
-    }
-
-    // update global cluster var
-    currentClusterNumber = newCluster;
-    uint32_t parentCluster = currentClusterNumber;
-
-    char *newPath = NULL;
-    if (currentDirectory != NULL) {
-        // allocate memory for the new path with '/' appended to currentDirectory
-        newPath = malloc(strlen(currentDirectory) + strlen(dirname) + 2);
-        if (newPath == NULL) {
-            printf("Memory allocation error\n");
-            return false;
-        }
-        // construct the new path with '/' appended to currentDirectory
-        strcpy(newPath, currentDirectory);
-        strcat(newPath, "/");
-        strcat(newPath, dirname);
-    } else {
-        // allocate memory for just the dirname
-        newPath = malloc(strlen(dirname) + 1);
-        if (newPath == NULL) {
-            printf("Memory allocation error\n");
-            return false;
-        }
-        strcpy(newPath, dirname);
-    }
-
-    // update global currentDirectory var
-    free(currentDirectory);
-    currentDirectory = newPath;
-
-    return true;
-}
-
 
 uint32_t getClusterNumber(char *path){
 	char *path_copy = strdup(path);
@@ -548,6 +498,7 @@ void open_file_for_read(const char* filename) {
     new_file.size = file_entry->DIR_FileSize;
     new_file.offset = 0;
     new_file.access_mode = 0x01;
+    strcpy(currentDirectory, new_file.path);
 
     opened_files = realloc(opened_files, (numOpenedFiles + 1) * sizeof(open_file));
     opened_files[numOpenedFiles] = new_file;
@@ -1018,6 +969,16 @@ bool remove_empty_directory(uint32_t directoryCluster, char *path) {
 	return false;
     }
     return true;
+}
+
+void print_open_files() {
+    if(numOpenedFiles == 0){
+        printf("No files open.\n");
+	return;
+    }
+    for(int i = 0; i < numOpenedFiles; i++) {
+        printf("Index: %d\nName: %s\nMode: " PRIu8 "\nOffset: " PRIu32 "\nPath: %s\n", i, opened_files[i].name, opened_files[i].access_mode, opened_files[i].offset, opened_files[i].path);
+    }
 }
 
 tokenlist *new_tokenlist(void) {
