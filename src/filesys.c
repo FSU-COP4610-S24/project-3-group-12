@@ -273,61 +273,6 @@ bool changeDirectory(const char *dirname) {
     return true;
 }
 
-    // store current cluster number in array and reallocate memory if necessary
-    if (pathIndex >= pathSize - 1) {
-        // reallocate memory for the path size
-        int newSize = pathSize == 0 ? 1 : 2 * pathSize; // Double the size
-        uint32_t *temp = realloc(clusterPath, newSize * sizeof(uint32_t));
-        if (temp == NULL) {
-            printf("Memory allocation error.\n");
-            return false;
-        }
-        clusterPath = temp;
-        pathSize = newSize;
-    }
-    // store current cluster number
-    pathIndex++;
-    clusterPath[pathIndex] = currentClusterNumber;
-
-    uint32_t newCluster = getClusterNumber(dirname);
-    if (newCluster == 0) {
-        return false;
-    }
-
-    // update global cluster var
-    currentClusterNumber = newCluster;
-    uint32_t parentCluster = currentClusterNumber;
-
-    char *newPath = NULL;
-    if (currentDirectory != NULL) {
-        // allocate memory for the new path with '/' appended to currentDirectory
-        newPath = malloc(strlen(currentDirectory) + strlen(dirname) + 2);
-        if (newPath == NULL) {
-            printf("Memory allocation error\n");
-            return false;
-        }
-        // construct the new path with '/' appended to currentDirectory
-        strcpy(newPath, currentDirectory);
-        strcat(newPath, "/");
-        strcat(newPath, dirname);
-    } else {
-        // allocate memory for just the dirname
-        newPath = malloc(strlen(dirname) + 1);
-        if (newPath == NULL) {
-            printf("Memory allocation error\n");
-            return false;
-        }
-        strcpy(newPath, dirname);
-    }
-
-    // update global currentDirectory var
-    free(currentDirectory);
-    currentDirectory = newPath;
-
-    return true;
-}
-
-
 uint32_t getClusterNumber(char *path){
 	char *path_copy = strdup(path);
 	uint32_t currentCluster = currentClusterNumber;
