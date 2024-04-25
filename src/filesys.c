@@ -201,7 +201,7 @@ int main(int argc, char *argv[]) {
             if (tokens->size >= 3) {
                 char *filename = tokens->items[1];
                 int offset = atoi(tokens->items[2]);
-                lseek_file(filename, offset);
+                set_lseek(filename, offset);
             } else {
                 printf("Error: lseek <file> <offset>\n");
             }
@@ -1023,7 +1023,8 @@ void set_lseek(char* filename, int new_offset) {
     bool file = false;
     bool offset_val = false;
     // Makes sure file matches input and sets a new offset
-    if (strcmp(opened_files[i].name, filename) == 0) {
+    for (int i = 0; i < numOpenedFiles; ++i) {
+        if (strcmp(opened_files[i].name, filename) == 0) {
             file = true;
             if (opened_files[i].is_open) {
                 if (new_offset >= 0 && new_offset <= opened_files[i].size) {
