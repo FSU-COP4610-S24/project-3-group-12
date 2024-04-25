@@ -7,6 +7,7 @@
 #include <inttypes.h>
 #include <sys/stat.h>
 
+// File attributes
 #define ATTR_READ_ONLY   0x01
 #define ATTR_HIDDEN      0x02
 #define ATTR_SYSTEM      0x04
@@ -14,6 +15,7 @@
 #define ATTR_DIRECTORY   0x10
 #define ATTR_ARCHIVE     0x20
 
+// Function declarations
 void displayPrompt(char * imageFileName, char *currentDirectory);
 char *get_input(void);
 tokenlist *new_tokenlist(void);
@@ -40,6 +42,7 @@ void remove_directory_entry(uint32_t directoryCluster, char *path);
 bool remove_empty_directory(uint32_t directoryCluster, char *path);
 void print_open_files();
 
+// structure for FAT32 Image
 struct imageStruct {
     int fd;
     uint16_t BpSect;
@@ -55,6 +58,7 @@ struct imageStruct {
     int64_t size;
 };
 
+// structure for directories
 typedef struct __attribute__((packed)) directoryEntry {
     char DIR_Name[11];
     uint8_t DIR_Attr;
@@ -65,6 +69,7 @@ typedef struct __attribute__((packed)) directoryEntry {
     uint32_t DIR_FileSize;
 } directoryEntry;
 
+// Structure for files that have been opened
 typedef struct {
     char name[11];
     int is_open;
@@ -75,6 +80,7 @@ typedef struct {
     char path[64];
 } open_file;
 
+// Initializes global variables and functions
 struct imageStruct *image;
 struct directoryEntry *directoryEntries = NULL;
 open_file *opened_files = NULL;
@@ -98,7 +104,7 @@ int main(int argc, char *argv[]) {
         printf("Argument error: ./filesys <FAT32 image file>\n");
         return 1;
     }
-
+    // Initializes the image
     sprintf(command, "sudo mount -o loop %s ./mnt ", argv[1]);
     status = system(command);
     if (status == -1) {
@@ -112,7 +118,7 @@ int main(int argc, char *argv[]) {
     stat(argv[1], &fileInfo);
     image->size = (int64_t)fileInfo.st_size;
     initImage(image);
-
+    // Display prompt while loop
     while (1) {
         displayPrompt(argv[1], currentDirectory);
         char *input = get_input();
@@ -240,16 +246,17 @@ bool changeDirectory(const char *dirname) {
             return false;
         }
     }
-    
+    // Finds a new cluster in the current directory
     uint32_t newCluster = findClusterInDirectory(currentClusterNumber, dirname);
     if (newCluster == 0) {
 	printf("Error: Directory not found.\n");
 	return false;
     }
-
+    // Change current cluster number
     currentClusterNumber = newCluster;
     uint32_t parentCluster = currentClusterNumber;
 
+    // Create a new path for the directory
     char *newPath = NULL;
     if (currentDirectory != NULL) {
 	newPath = (char *)malloc(strlen(currentDirectory) + strlen(dirname) + 2);
@@ -261,7 +268,7 @@ bool changeDirectory(const char *dirname) {
 	newPath = (char *)malloc(strlen(dirname) + 1);
 	strcpy(newPath, dirname);
     }
-
+     
     free(currentDirectory);
     currentDirectory = newPath;
 
@@ -275,7 +282,7 @@ bool changeDirectory(const char *dirname) {
         clusterPath = temp;
         pathSize++;
     }
-    // store current cluster number
+    // store current cluster number and update path index
     pathIndex++;
     clusterPath[pathIndex] = currentClusterNumber;
 
@@ -283,6 +290,7 @@ bool changeDirectory(const char *dirname) {
 }
 
 uint32_t getClusterNumber(char *path){
+	// returns the current cluster number for a specific path or directory
 	char *path_copy = strdup(path);
 	uint32_t currentCluster = currentClusterNumber;
 	char *token = strtok(path, "/");
@@ -301,7 +309,7 @@ uint32_t getClusterNumber(char *path){
 }
 
 uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
-    //load directory entries for the specified cluster
+    // load directory entries for the specified cluster
     loadDirectoryEntries(directoryCluster);
 
     if (directoryEntries == NULL) {
@@ -309,7 +317,7 @@ uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
         return 0; // Return an appropriate value indicating error
     }
 
-    //iterate through directory entries to find the matching one
+    // iterate through directory entries to find the matching one
     for (int i = 0; i < numDirectoryEntries; ++i) {
         if (compareDirectoryEntryName(directoryEntries[i].DIR_Name, name)) {
             if (directoryEntries[i].DIR_Attr == ATTR_DIRECTORY) {
@@ -326,6 +334,7 @@ uint32_t findClusterInDirectory(uint32_t directoryCluster, char *name) {
 }
 
 uint32_t getFATEntry(uint32_t clusterNumber) {
+    // Returns the FAT Entry from a cluster
     uint32_t offset = image->rsvSecCnt * image->BpSect + clusterNumber * 4;
     uint32_t fatEntry;
 
@@ -336,6 +345,7 @@ uint32_t getFATEntry(uint32_t clusterNumber) {
 }
 
 uint32_t allocateNewCluster() {
+    // Allocates a new cluster for directories/files
     for (uint32_t i = 2; i < image->totalDataClus; i++) {
 	uint32_t fatEntry = getFATEntry(i);
 	if (fatEntry == 0) {
@@ -348,12 +358,14 @@ uint32_t allocateNewCluster() {
 }
 
 uint32_t convert_cluster_to_offset(uint32_t cluster) {
+    // Returns the offset of a given cluster
     uint32_t cluster_size = image->sectpClus * image->BpSect;
     uint32_t offset = image->dataStartOffset + (cluster - 2) * cluster_size;
     return offset;
 }
 
 void setFATEntry(uint32_t clusterNumber, uint32_t value) {
+    // Sets the FAT Entry of a cluster based on a value
     uint32_t offset = image->rsvSecCnt * image->BpSect + clusterNumber * 4;
 
     lseek(image->fd, offset, SEEK_SET);
@@ -362,6 +374,7 @@ void setFATEntry(uint32_t clusterNumber, uint32_t value) {
 
 
 directoryEntry* encode_dir_entry(int fat32_fd, uint32_t offset) {
+    // Encodes directory entry and reads its bytes
     directoryEntry *dentry = (directoryEntry*)malloc(sizeof(directoryEntry));
     ssize_t rd_bytes = pread(fat32_fd, (void*)dentry, sizeof(directoryEntry), offset);
 
@@ -379,11 +392,13 @@ int is_valid_name(uint8_t *name) {
 }
 
 uint32_t convert_clus_num_to_offset_in_fat_region(uint32_t clus_num) {
+    // Given a cluster number, returns its fat region offset
     uint32_t fat_region_offset = 0x4000;
     return fat_region_offset + clus_num * 4;
 }
 
 uint32_t getNextCluster(uint32_t currentCluster) {
+    // Finds the next cluster based on the current cluster
     uint32_t fat32_fd = image->fd;
     uint32_t max_clus_num = (image->secpFAT * image->BpSect) / image->sectpClus;
     uint32_t offset = convert_clus_num_to_offset_in_fat_region(currentCluster);
@@ -485,14 +500,16 @@ void listDirectoryEntries(const char *path) {
 }
 
 void open_file_for_read(const char* filename) {
+    // Opens files for reading
     loadDirectoryEntries(currentClusterNumber);
     directoryEntry* file_entry = find_file_in_directory(filename);
-
+    
     if (file_entry == NULL) {
 	printf("Error: File '%s' not found.\n", filename);
 	return;
     }
 
+    // Makes sure a file is not already opened	
     for (int i = 0; i < numOpenedFiles; ++i) {
 	if (strcmp(opened_files[i].name, filename) == 0 && opened_files[i].is_open) {
 	    printf("Error: File '%s' is already open.\n", filename);
@@ -500,6 +517,7 @@ void open_file_for_read(const char* filename) {
 	}
     }
 
+    // Initializes a new opened file	
     open_file new_file;
     strncpy(new_file.name, filename, 11);
     new_file.is_open = 1;
@@ -509,6 +527,7 @@ void open_file_for_read(const char* filename) {
     new_file.access_mode = 0x01;
     strcpy(currentDirectory, new_file.path);
 
+    // Make updates to opened files array	
     opened_files = realloc(opened_files, (numOpenedFiles + 1) * sizeof(open_file));
     opened_files[numOpenedFiles] = new_file;
     numOpenedFiles++;
@@ -546,6 +565,7 @@ void closeFile(const char* filename) {
 void read_data_from_file(const char *filename, int size) {
     open_file* file = NULL;
 
+    // Makes sure a file exists and is open for reading	
     for (int i = 0; i < numOpenedFiles; ++i) {
 	if (strcmp(opened_files[i].name, filename) == 0 && opened_files[i].is_open) {
 	    file = &opened_files[i];
@@ -572,6 +592,7 @@ void read_data_from_file(const char *filename, int size) {
 	size = file->size - file->offset;
     }
 
+    // Calculate cluster and offset	
     uint32_t cluster = file->start_cluster + (file->offset / (image->sectpClus * image->BpSect));
     uint32_t offset = convert_cluster_to_offset(cluster) + (file->offset % (image->sectpClus * 
 			    image->BpSect));
@@ -584,6 +605,7 @@ void read_data_from_file(const char *filename, int size) {
 	return;
     }
 
+    // Print data that was read from file	
     printf("Data read from file '%s':\n", filename);
     for (int i = 0; i < size; ++i) {
 	printf("%c", buffer[i]);
@@ -595,6 +617,7 @@ void read_data_from_file(const char *filename, int size) {
 }
 
 void write_data_to_file(const char *filename, const char *data) {
+    // Checks to make sure if file exists or is open
     open_file *file = NULL;
     for (int i = 0; i < numOpenedFiles; i++) {
 	if (strcmp(opened_files[i].name, filename) == 0 && opened_files[i].is_open) {
@@ -602,17 +625,19 @@ void write_data_to_file(const char *filename, const char *data) {
 	    break;
 	}
     }
-
+    
     if (file == NULL) {
 	printf("Error: File '%s' not found or not opened.\n", filename);
 	return;
     }
 
+    // Check that the file is not read only	
     if (file->access_mode == 0x01) {
 	printf("Error: File '%s' is not write accessible.\n", filename);
 	return;
     }
 
+    // Allow write until out of bytes
     int dataLength = strlen(data);
     int remainingBytes = dataLength;
     int dataOffset = file->offset;
@@ -660,6 +685,7 @@ void write_data_to_file(const char *filename, const char *data) {
 }
 
 uint32_t compute_dentry_offset(uint32_t clusterNumber, const char* filename) {
+	// Computes offset of a directory entry
         int fat32_fd = image->fd;
         uint32_t clusterSize = image->sectpClus * image->BpSect;
         uint32_t offset = image->dataStartOffset + (clusterNumber - 2) * clusterSize;
@@ -714,20 +740,23 @@ bool makeDirectory(const char *dirname) {
             return false;
         }
     }
-
+    // Allocate a new cluster for the directory
     uint32_t newCluster = allocateNewCluster();
     if (newCluster == 0) {
         printf("Error: No free clusters.\n");
 	return false;
     }
-    
+
+    // Compute cluster size and cluster offset	
     uint32_t clusterSize = image->sectpClus * image->BpSect;
     uint32_t newClusterOffset = convert_cluster_to_offset(newCluster);
 
+    // Add dot entries to directory
     directoryEntry dotEntry, dotDotEntry;
     memset(&dotEntry, 0, sizeof(directoryEntry));
     memset(&dotEntry, 0, sizeof(directoryEntry));
 
+    // Initialize dot entries	
     strncpy(dotEntry.DIR_Name, ".          ", 11);
     dotEntry.DIR_Attr = ATTR_DIRECTORY;
     dotEntry.DIR_FstClusHI = (newCluster >> 16) & 0xFFFF;
@@ -740,6 +769,7 @@ bool makeDirectory(const char *dirname) {
     dotEntry.DIR_FstClusLO = currentClusterNumber & 0xFFFF;
     dotEntry.DIR_FileSize = 0;
 
+    // Write dot entry images	
     ssize_t bytesWritten1 = pwrite(image->fd, &dotEntry, sizeof(directoryEntry), newClusterOffset);
     ssize_t bytesWritten2 = pwrite(image->fd, &dotDotEntry, sizeof(directoryEntry), 
 		    newClusterOffset + sizeof(directoryEntry));
@@ -749,6 +779,7 @@ bool makeDirectory(const char *dirname) {
 	return false;
     }
 
+    // Create parent cluster offset and write new directory entry	
     uint32_t parentClusterOffset = image->dataStartOffset + (currentClusterNumber - 2) * clusterSize;    
     while (parentClusterOffset < image->dataStartOffset + (currentClusterNumber - 2 + 1) 
 		    * clusterSize) {
@@ -905,6 +936,7 @@ void displayPrompt(char *imageFileName, char *currentDirectory) {
     printf("%s/%s> ", imageFileName, currentDirectory);
 }
 char *get_input(void) {
+    // Gets user input from image command line
     char *buffer = NULL;
     int bufsize = 0;
     char line[5];
@@ -927,6 +959,7 @@ char *get_input(void) {
 }
 
 directoryEntry* find_file_in_directory(const char* filename) {
+    // Used to find a specific file within a directory
     for (int i = 0; i < numDirectoryEntries; ++i) {
 	if (compareDirectoryEntryName(directoryEntries[i].DIR_Name, filename)) {
 	    return &directoryEntries[i];
@@ -936,12 +969,13 @@ directoryEntry* find_file_in_directory(const char* filename) {
 }
 
 bool is_directory_empty(uint32_t directoryCluster) {
+    // Checks to find if a directory is entry and returns true or false
     uint32_t offset = convert_cluster_to_offset(directoryCluster);
     directoryEntry entry;
     int entriesToCheck = image->BpSect * image->sectpClus / sizeof(directoryEntry);  // Calculate number of entries per cluster
 
     lseek(image->fd, offset, SEEK_SET);
-    // We need to loop through the directory entries in the cluster
+    // loops through the directory entries in the cluster
     for (int i = 0; i < entriesToCheck; i++) {
         // Read the next directory entry
         if(pread(image->fd, &entry, sizeof(directoryEntry), offset + i * sizeof(directoryEntry)) != sizeof(directoryEntry)) {
@@ -966,6 +1000,7 @@ bool is_directory_empty(uint32_t directoryCluster) {
 }
 
 bool remove_empty_directory(uint32_t directoryCluster, char *path) {
+    // Removes empty directory entries based on cluster and path
     uint32_t targetCluster = findClusterInDirectory(directoryCluster, path);
     if(targetCluster == 0) {
         printf("Error locating directory\n");
@@ -981,6 +1016,7 @@ bool remove_empty_directory(uint32_t directoryCluster, char *path) {
 }
 
 void print_open_files() {
+    // Prints the list of opened files
     if(numOpenedFiles == 0){
         printf("No files open.\n");
 	return;
@@ -991,8 +1027,10 @@ void print_open_files() {
 }
 
 void set_lseek(char* filename, int new_offset) {
+    // Sets lseek function in the shell
     bool file = false;
     bool offset_val = false;
+    // Makes sure file matches input and sets a new offset
     if (strcmp(opened_files[i].name, filename) == 0) {
             file = true;
             if (opened_files[i].is_open) {
@@ -1016,6 +1054,7 @@ void set_lseek(char* filename, int new_offset) {
 }
 
 tokenlist *new_tokenlist(void) {
+    // Creates a new token list based on a previous one
     tokenlist *tokens = (tokenlist *)malloc(sizeof(tokenlist));
     tokens->size = 0;
     tokens->items = (char **)malloc(sizeof(char *));
@@ -1024,6 +1063,7 @@ tokenlist *new_tokenlist(void) {
 }
 
 void add_token(tokenlist *tokens, char *item) {
+    // Adds a token to the list of tokens
     int i = tokens->size;
     tokens->items = (char **)realloc(tokens->items, (i + 2) * sizeof(char *));
     tokens->items[i] = (char *)malloc(strlen(item) + 1);
@@ -1033,6 +1073,7 @@ void add_token(tokenlist *tokens, char *item) {
 }
 
 tokenlist *get_tokens(char *input) {
+    // Returns shell input tokens
     char *buf = (char *)malloc(strlen(input) + 1);
     strcpy(buf, input);
     tokenlist *tokens = new_tokenlist();
@@ -1046,6 +1087,7 @@ tokenlist *get_tokens(char *input) {
 }
 
 void free_tokens(tokenlist *tokens) {
+    // Frees list of tokens
     for (int i = 0; i < tokens->size; i++)
         free(tokens->items[i]);
     free(tokens->items);
