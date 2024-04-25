@@ -38,6 +38,7 @@ uint32_t compute_dentry_offset(uint32_t clusterNumber, const char* filename);
 bool is_directory_empty(uint32_t directoryCluster);
 void remove_directory_entry(uint32_t directoryCluster, char *path);
 bool remove_empty_directory(uint32_t directoryCluster, char *path);
+void print_open_files();
 
 struct imageStruct {
     int fd;
@@ -71,6 +72,7 @@ typedef struct {
     uint32_t size;
     uint32_t offset;
     uint8_t access_mode;
+    char path[64];
 } open_file;
 
 struct imageStruct *image;
@@ -185,6 +187,9 @@ int main(int argc, char *argv[]) {
                 char *target = tokens->items[1];
 		remove_empty_directory(currentClusterNumber, target);
 	    }
+	}
+	if (strcmp(tokens->items[0], "lsof") == 0) {
+            print_open_files();
 	}
         free(input);
         free_tokens(tokens);
@@ -548,6 +553,7 @@ void open_file_for_read(const char* filename) {
     new_file.size = file_entry->DIR_FileSize;
     new_file.offset = 0;
     new_file.access_mode = 0x01;
+    strcpy(currentDirectory, new_file.path);
 
     opened_files = realloc(opened_files, (numOpenedFiles + 1) * sizeof(open_file));
     opened_files[numOpenedFiles] = new_file;
@@ -1018,6 +1024,16 @@ bool remove_empty_directory(uint32_t directoryCluster, char *path) {
 	return false;
     }
     return true;
+}
+
+void print_open_files() {
+    if(numOpenedFiles == 0){
+        printf("No files open.\n");
+	return;
+    }
+    for(int i = 0; i < numOpenedFiles; i++) {
+        printf("Index: %d\nName: %s\nMode: " PRIu8 "\nOffset: " PRIu32 "\nPath: %s\n", i, opened_files[i].name, opened_files[i].access_mode, opened_files[i].offset, opened_files[i].path);
+    }
 }
 
 tokenlist *new_tokenlist(void) {
