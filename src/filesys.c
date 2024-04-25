@@ -574,7 +574,7 @@ void read_data_from_file(const char *filename, int size) {
     }
 
     if (file == NULL) {
-	printf("Error: File '%s' is not open for reading.\n", filename);
+	printf("Error: File '%s' not found.\n", filename);
 	return;
     }
 
@@ -584,7 +584,6 @@ void read_data_from_file(const char *filename, int size) {
     }
 
     if (file->offset >= file->size) {
-	printf("Error: Reached end of file.\n");
 	return;
     }
 
@@ -600,7 +599,6 @@ void read_data_from_file(const char *filename, int size) {
     ssize_t bytes_read = pread(image->fd, buffer, size, offset);
 
     if (bytes_read != size) {
-	printf("Error: Could not read bytes.\n");
 	free(buffer);
 	return;
     }
@@ -653,7 +651,6 @@ void write_data_to_file(const char *filename, const char *data) {
 	ssize_t bytesWritten = pwrite(image->fd, data, bytesToWrite, clusterOffset);
 
 	if (bytesWritten != bytesToWrite) {
-	    printf("Error: Failed to write to file '%s'.\n", filename);
 	    return;
 	}
 
@@ -667,7 +664,6 @@ void write_data_to_file(const char *filename, const char *data) {
 	    if (nextCluster == 0) {
 		nextCluster = allocateNewCluster();
 		if (nextCluster == 0) {
-		    printf("Error: No more free clusters.\n");
     		    return;
 		}
 	    
@@ -681,7 +677,6 @@ void write_data_to_file(const char *filename, const char *data) {
     }
 
     file->offset += dataLength;
-    printf("Data written to '%s'.\n", filename);
 }
 
 uint32_t compute_dentry_offset(uint32_t clusterNumber, const char* filename) {
@@ -743,7 +738,6 @@ bool makeDirectory(const char *dirname) {
     // Allocate a new cluster for the directory
     uint32_t newCluster = allocateNewCluster();
     if (newCluster == 0) {
-        printf("Error: No free clusters.\n");
 	return false;
     }
 
@@ -775,7 +769,6 @@ bool makeDirectory(const char *dirname) {
 		    newClusterOffset + sizeof(directoryEntry));
 
     if (bytesWritten1 != sizeof(directoryEntry) || bytesWritten2 != sizeof(directoryEntry)) {
-	printf("Error initializing new directory.\n");
 	return false;
     }
 
@@ -794,7 +787,6 @@ bool makeDirectory(const char *dirname) {
             ssize_t bytesWritten = pwrite(image->fd, entry, sizeof(directoryEntry), 
 				parentClusterOffset);
 	    if (bytesWritten != sizeof(directoryEntry)) {
-		printf("Error writing new directory entry.\n");
 		return false;
 	    }
 		break;
